@@ -1,0 +1,30 @@
+{
+  "short_name": "Block Parliament",
+  "name": "Block Parliament Validator",
+  "icons": [
+    {
+      "src": "logo/owl-64.png",
+      "type": "image/png",
+      "sizes": "64x64"
+    },
+    {
+      "src": "logo/owl-128.png",
+      "type": "image/png",
+      "sizes": "128x128"
+    },
+    {
+      "src": "logo/owl-256.png",
+      "type": "image/png",
+      "sizes": "256x256"
+    },
+    {
+      "src": "logo/owl-512.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#1a1a1a",
+  "background_color": "#f8f6f1"
+}
