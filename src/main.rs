@@ -1005,31 +1005,20 @@ async fn run_report_generation(args: Args, cache: Cache) -> Result<()> {
     } else {
         println!("Generating reports...");
     }
-    reports::generate_all_reports(
-        &args.output_dir,
-        &rewards,
-        &categorized,
-        &mev_claims,
-        &leader_fees,
-        &vote_costs,
-        &all_expenses,
-        &price_cache,
-        &config,
-        args.year,
-    )?;
+    let report_data = reports::ReportData {
+        rewards: &rewards,
+        categorized: &categorized,
+        mev_claims: &mev_claims,
+        leader_fees: &leader_fees,
+        vote_costs: &vote_costs,
+        expenses: &all_expenses,
+        prices: &price_cache,
+        config: &config,
+    };
+    reports::generate_all_reports(&args.output_dir, &report_data, args.year)?;
 
     // Step 10: Print summary
-    reports::print_summary(
-        &rewards,
-        &categorized,
-        &mev_claims,
-        &leader_fees,
-        &vote_costs,
-        &all_expenses,
-        &price_cache,
-        &config,
-        args.year,
-    );
+    reports::print_summary(&report_data, args.year);
 
     println!("\nDone! Reports written to: {}", args.output_dir.display());
 

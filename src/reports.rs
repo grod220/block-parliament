@@ -14,41 +14,41 @@ use crate::prices::{get_price, PriceCache};
 use crate::transactions::{CategorizedTransfers, EpochReward};
 use crate::vote_costs::EpochVoteCost;
 
+/// Bundled report data to reduce function argument counts
+pub struct ReportData<'a> {
+    pub rewards: &'a [EpochReward],
+    pub categorized: &'a CategorizedTransfers,
+    pub mev_claims: &'a [MevClaim],
+    pub leader_fees: &'a [EpochLeaderFees],
+    pub vote_costs: &'a [EpochVoteCost],
+    pub expenses: &'a [Expense],
+    pub prices: &'a PriceCache,
+    pub config: &'a Config,
+}
+
 /// Generate all CSV reports
 pub fn generate_all_reports(
     output_dir: &Path,
-    rewards: &[EpochReward],
-    categorized: &CategorizedTransfers,
-    mev_claims: &[MevClaim],
-    leader_fees: &[EpochLeaderFees],
-    vote_costs: &[EpochVoteCost],
-    expenses: &[Expense],
-    prices: &PriceCache,
-    config: &Config,
+    data: &ReportData,
     year_filter: Option<i32>,
 ) -> Result<()> {
     generate_income_ledger(
         output_dir,
-        rewards,
-        categorized,
-        mev_claims,
-        leader_fees,
-        prices,
+        data.rewards,
+        data.categorized,
+        data.mev_claims,
+        data.leader_fees,
+        data.prices,
     )?;
-    generate_expense_ledger(output_dir, expenses, vote_costs, prices, config)?;
-    generate_treasury_ledger(output_dir, categorized, prices)?;
-    generate_summary(
+    generate_expense_ledger(
         output_dir,
-        rewards,
-        categorized,
-        mev_claims,
-        leader_fees,
-        vote_costs,
-        expenses,
-        prices,
-        config,
-        year_filter,
+        data.expenses,
+        data.vote_costs,
+        data.prices,
+        data.config,
     )?;
+    generate_treasury_ledger(output_dir, data.categorized, data.prices)?;
+    generate_summary(output_dir, data, year_filter)?;
 
     Ok(())
 }
@@ -360,18 +360,7 @@ fn generate_treasury_ledger(
 }
 
 /// Generate summary.csv (monthly P&L with annual summaries)
-fn generate_summary(
-    output_dir: &Path,
-    rewards: &[EpochReward],
-    categorized: &CategorizedTransfers,
-    mev_claims: &[MevClaim],
-    leader_fees: &[EpochLeaderFees],
-    vote_costs: &[EpochVoteCost],
-    expenses: &[Expense],
-    prices: &PriceCache,
-    config: &Config,
-    year_filter: Option<i32>,
-) -> Result<()> {
+fn generate_summary(output_dir: &Path, data: &ReportData, year_filter: Option<i32>) -> Result<()> {
     let path = output_dir.join(constants::SUMMARY_FILENAME);
     let mut wtr = Writer::from_path(&path)?;
 
@@ -379,10 +368,10 @@ fn generate_summary(
     let mut monthly: HashMap<String, MonthlyData> = HashMap::new();
 
     // Commission
-    for reward in rewards {
+    for reward in data.rewards {
         if let Some(date) = &reward.date {
             let month = &date[..7];
-            let price = get_price(prices, date);
+            let price = get_price(data.prices, date);
             let entry = monthly.entry(month.to_string()).or_default();
             entry.commission_sol += reward.amount_sol;
             entry.commission_usd += reward.amount_sol * price;
@@ -390,10 +379,10 @@ fn generate_summary(
     }
 
     // SFDP reimbursements
-    for transfer in &categorized.sfdp_reimbursements {
+    for transfer in &data.categorized.sfdp_reimbursements {
         if let Some(date) = &transfer.date {
             let month = &date[..7];
-            let price = get_price(prices, date);
+            let price = get_price(data.prices, date);
             let entry = monthly.entry(month.to_string()).or_default();
             entry.sfdp_sol += transfer.amount_sol;
             entry.sfdp_usd += transfer.amount_sol * price;
@@ -401,10 +390,10 @@ fn generate_summary(
     }
 
     // MEV from transfers
-    for transfer in &categorized.mev_deposits {
+    for transfer in &data.categorized.mev_deposits {
         if let Some(date) = &transfer.date {
             let month = &date[..7];
-            let price = get_price(prices, date);
+            let price = get_price(data.prices, date);
             let entry = monthly.entry(month.to_string()).or_default();
             entry.mev_sol += transfer.amount_sol;
             entry.mev_usd += transfer.amount_sol * price;
@@ -412,10 +401,10 @@ fn generate_summary(
     }
 
     // MEV from Jito API (with per-epoch dates)
-    for claim in mev_claims {
+    for claim in data.mev_claims {
         if let Some(date) = &claim.date {
             let month = &date[..7];
-            let price = get_price(prices, date);
+            let price = get_price(data.prices, date);
             let entry = monthly.entry(month.to_string()).or_default();
             entry.mev_sol += claim.amount_sol;
             entry.mev_usd += claim.amount_sol * price;
@@ -423,10 +412,10 @@ fn generate_summary(
     }
 
     // Leader fees from block production
-    for fees in leader_fees {
+    for fees in data.leader_fees {
         if let Some(date) = &fees.date {
             let month = &date[..7];
-            let price = get_price(prices, date);
+            let price = get_price(data.prices, date);
             let entry = monthly.entry(month.to_string()).or_default();
             entry.leader_fees_sol += fees.total_fees_sol;
             entry.leader_fees_usd += fees.total_fees_sol * price;
@@ -434,16 +423,16 @@ fn generate_summary(
     }
 
     // Vote costs by month (with SFDP coverage calculation)
-    for cost in vote_costs {
+    for cost in data.vote_costs {
         if let Some(date) = &cost.date {
             let month = &date[..7];
-            let price = get_price(prices, date);
+            let price = get_price(data.prices, date);
             let gross_usd = cost.total_fee_sol * price;
 
             // Calculate SFDP coverage for net cost
             let parsed_date = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
                 .unwrap_or_else(|_| chrono::NaiveDate::from_ymd_opt(2025, 12, 15).unwrap());
-            let coverage = config.sfdp_coverage_percent(&parsed_date);
+            let coverage = data.config.sfdp_coverage_percent(&parsed_date);
             let net_usd = gross_usd * (1.0 - coverage);
 
             let entry = monthly.entry(month.to_string()).or_default();
@@ -454,7 +443,7 @@ fn generate_summary(
     }
 
     // Expenses by month
-    for expense in expenses {
+    for expense in data.expenses {
         if let Ok(date) = chrono::NaiveDate::parse_from_str(&expense.date, "%Y-%m-%d") {
             let month = date.format("%Y-%m").to_string();
             let entry = monthly.entry(month).or_default();
@@ -607,17 +596,7 @@ struct MonthlyData {
 }
 
 /// Print summary to console
-pub fn print_summary(
-    rewards: &[EpochReward],
-    categorized: &CategorizedTransfers,
-    mev_claims: &[MevClaim],
-    leader_fees: &[EpochLeaderFees],
-    vote_costs: &[EpochVoteCost],
-    expenses: &[Expense],
-    prices: &PriceCache,
-    config: &Config,
-    year_filter: Option<i32>,
-) {
+pub fn print_summary(data: &ReportData, year_filter: Option<i32>) {
     // Helper to check if a date matches the year filter
     let matches_year = |date: &str| -> bool {
         if let Some(year) = year_filter {
@@ -636,71 +615,80 @@ pub fn print_summary(
     println!("============================================================\n");
 
     // Calculate totals (filtered by year if specified)
-    let total_commission_sol: f64 = rewards
+    let total_commission_sol: f64 = data
+        .rewards
         .iter()
         .filter(|r| r.date.as_deref().map(&matches_year).unwrap_or(false))
         .map(|r| r.amount_sol)
         .sum();
-    let total_commission_usd: f64 = rewards
+    let total_commission_usd: f64 = data
+        .rewards
         .iter()
         .filter(|r| r.date.as_deref().map(&matches_year).unwrap_or(false))
         .map(|r| {
-            let price = get_price(prices, r.date.as_deref().unwrap_or("2025-12-15"));
+            let price = get_price(data.prices, r.date.as_deref().unwrap_or("2025-12-15"));
             r.amount_sol * price
         })
         .sum();
 
     // MEV from transfers
-    let mev_transfer_sol: f64 = categorized
+    let mev_transfer_sol: f64 = data
+        .categorized
         .mev_deposits
         .iter()
         .filter(|t| t.date.as_deref().map(&matches_year).unwrap_or(false))
         .map(|t| t.amount_sol)
         .sum();
     // MEV from ClaimStatus PDAs
-    let mev_claims_sol: f64 = mev_claims
+    let mev_claims_sol: f64 = data
+        .mev_claims
         .iter()
         .filter(|c| c.date.as_deref().map(&matches_year).unwrap_or(false))
         .map(|c| c.amount_sol)
         .sum();
     let total_mev_sol = mev_transfer_sol + mev_claims_sol;
 
-    let total_mev_usd: f64 = categorized
+    let total_mev_usd: f64 = data
+        .categorized
         .mev_deposits
         .iter()
         .filter(|t| t.date.as_deref().map(&matches_year).unwrap_or(false))
         .map(|t| {
-            let price = get_price(prices, t.date.as_deref().unwrap_or("2025-12-15"));
+            let price = get_price(data.prices, t.date.as_deref().unwrap_or("2025-12-15"));
             t.amount_sol * price
         })
         .sum::<f64>()
-        + mev_claims
+        + data
+            .mev_claims
             .iter()
             .filter(|c| c.date.as_deref().map(&matches_year).unwrap_or(false))
             .map(|c| {
-                let price = get_price(prices, c.date.as_deref().unwrap_or("2025-12-15"));
+                let price = get_price(data.prices, c.date.as_deref().unwrap_or("2025-12-15"));
                 c.amount_sol * price
             })
             .sum::<f64>();
 
     // Leader fees from block production
-    let total_leader_fees_sol: f64 = leader_fees
+    let total_leader_fees_sol: f64 = data
+        .leader_fees
         .iter()
         .filter(|f| f.date.as_deref().map(&matches_year).unwrap_or(false))
         .map(|f| f.total_fees_sol)
         .sum();
-    let total_leader_fees_usd: f64 = leader_fees
+    let total_leader_fees_usd: f64 = data
+        .leader_fees
         .iter()
         .filter(|f| f.date.as_deref().map(&matches_year).unwrap_or(false))
         .map(|f| {
-            let price = get_price(prices, f.date.as_deref().unwrap_or("2025-12-15"));
+            let price = get_price(data.prices, f.date.as_deref().unwrap_or("2025-12-15"));
             f.total_fees_sol * price
         })
         .sum();
 
     // Note: SFDP is tracked as expense offset, not calculated separately for revenue
 
-    let total_seeding_sol: f64 = categorized
+    let total_seeding_sol: f64 = data
+        .categorized
         .seeding
         .iter()
         .filter(|t| t.date.as_deref().map(&matches_year).unwrap_or(false))
@@ -708,7 +696,8 @@ pub fn print_summary(
         .sum();
 
     // Vote costs (with SFDP coverage)
-    let total_vote_costs_sol: f64 = vote_costs
+    let total_vote_costs_sol: f64 = data
+        .vote_costs
         .iter()
         .filter(|c| c.date.as_deref().map(&matches_year).unwrap_or(false))
         .map(|c| c.total_fee_sol)
@@ -716,18 +705,18 @@ pub fn print_summary(
     let mut total_vote_costs_gross_usd = 0.0;
     let mut total_vote_costs_net_usd = 0.0;
 
-    for cost in vote_costs {
+    for cost in data.vote_costs {
         let date = cost.date.as_deref().unwrap_or("2025-12-15");
         if !matches_year(date) {
             continue;
         }
-        let price = get_price(prices, date);
+        let price = get_price(data.prices, date);
         let gross_usd = cost.total_fee_sol * price;
 
         // Calculate SFDP coverage
         let parsed_date = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
             .unwrap_or_else(|_| chrono::NaiveDate::from_ymd_opt(2025, 12, 15).unwrap());
-        let coverage = config.sfdp_coverage_percent(&parsed_date);
+        let coverage = data.config.sfdp_coverage_percent(&parsed_date);
         let net_usd = gross_usd * (1.0 - coverage);
 
         total_vote_costs_gross_usd += gross_usd;
@@ -735,17 +724,20 @@ pub fn print_summary(
     }
 
     // Other expenses (hosting, contractors, etc.)
-    let total_other_expenses: f64 = expenses
+    let total_other_expenses: f64 = data
+        .expenses
         .iter()
         .filter(|e| matches_year(&e.date))
         .map(|e| e.amount_usd)
         .sum();
-    let hosting_expenses: f64 = expenses
+    let hosting_expenses: f64 = data
+        .expenses
         .iter()
         .filter(|e| e.category == ExpenseCategory::Hosting && matches_year(&e.date))
         .map(|e| e.amount_usd)
         .sum();
-    let contractor_expenses: f64 = expenses
+    let contractor_expenses: f64 = data
+        .expenses
         .iter()
         .filter(|e| e.category == ExpenseCategory::Contractor && matches_year(&e.date))
         .map(|e| e.amount_usd)
@@ -810,7 +802,7 @@ pub fn print_summary(
     println!("  Initial Seeding:    {:>10.4} SOL", total_seeding_sol);
     println!(
         "  Transfers found:    {}",
-        categorized.seeding.len() + categorized.vote_funding.len()
+        data.categorized.seeding.len() + data.categorized.vote_funding.len()
     );
 
     println!("============================================================");
