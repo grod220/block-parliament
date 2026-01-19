@@ -18,7 +18,7 @@ pub struct MevClaim {
     pub epoch: u64,
     pub total_tips_lamports: u64,
     #[allow(dead_code)]
-    pub commission_lamports: u64, // 10% of total
+    pub commission_lamports: u64, // Validator's share (from API mev_commission_bps)
     pub amount_sol: f64, // Commission in SOL
     pub date: Option<String>,
 }

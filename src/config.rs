@@ -35,9 +35,6 @@ pub struct ValidatorConfig {
     pub personal_wallet: String,
     /// Commission percentage (0-100)
     pub commission_percent: u8,
-    /// Jito MEV commission percentage
-    #[serde(default = "default_jito_commission")]
-    pub jito_mev_commission_percent: u8,
     /// First epoch with staking rewards
     pub first_reward_epoch: u64,
     /// Bootstrap date (when validator was set up)
@@ -45,10 +42,6 @@ pub struct ValidatorConfig {
     /// SFDP acceptance date (optional - only if in SFDP program)
     #[serde(default)]
     pub sfdp_acceptance_date: Option<String>,
-}
-
-fn default_jito_commission() -> u8 {
-    10
 }
 
 /// API keys section
@@ -106,9 +99,6 @@ pub struct Config {
     pub dune_api_key: Option<String>,
     /// Commission percentage
     pub commission_percent: u8,
-    /// Jito MEV commission percentage
-    #[allow(dead_code)]
-    pub jito_mev_commission_percent: u8,
     /// First epoch with rewards
     pub first_reward_epoch: u64,
     /// SFDP acceptance date (for calculating coverage schedule)
@@ -148,9 +138,8 @@ impl Config {
             // Dune API key for backfilling pruned data
             dune_api_key: file_config.api_keys.dune.clone(),
 
-            // Commission rates from config
+            // Commission rate from config
             commission_percent: validator.commission_percent,
-            jito_mev_commission_percent: validator.jito_mev_commission_percent,
 
             // First epoch where validator earned rewards
             first_reward_epoch: validator.first_reward_epoch,

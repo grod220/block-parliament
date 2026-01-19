@@ -150,7 +150,13 @@ fn generate_income_ledger(
             &format!("{:.2}", usd_value),
             &format!("epoch-{}", claim.epoch),
             &format!(
-                "10% commission on {:.4} SOL tips",
+                "{}% commission on {:.4} SOL tips",
+                if claim.total_tips_lamports > 0 {
+                    (claim.commission_lamports as f64 / claim.total_tips_lamports as f64 * 100.0)
+                        .round() as u64
+                } else {
+                    0
+                },
                 claim.total_tips_lamports as f64 / 1e9
             ),
         ])?;
