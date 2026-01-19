@@ -488,7 +488,11 @@ async fn handle_vote_costs_command(action: VoteCostsCommand, cache: &Cache) -> R
         }
 
         VoteCostsCommand::Estimate { start, end } => {
-            println!("Estimating vote costs for epochs {}..{}...\n", start, end);
+            let epoch_word = if start == end { "epoch" } else { "epochs" };
+            println!(
+                "Estimating vote costs for {} {}-{}...\n",
+                epoch_word, start, end
+            );
 
             let estimates = vote_costs::estimate_vote_costs(start, end);
 
@@ -886,6 +890,7 @@ async fn run_report_generation(args: Args, cache: Cache) -> Result<()> {
         &config,
         start_epoch,
         end_epoch,
+        current_epoch,
         args.no_cache,
         dune_api_key,
     )
@@ -970,20 +975,46 @@ async fn run_report_generation(args: Args, cache: Cache) -> Result<()> {
         total_leader_fees
     );
 
-    // Step 6: Load vote costs from cache
+    // Step 6: Load vote costs from cache, auto-estimate missing epochs
     println!("Loading vote costs...");
-    let vote_costs = cache.get_vote_costs(start_epoch, end_epoch).await?;
+    let mut vote_costs = cache.get_vote_costs(start_epoch, end_epoch).await?;
+    let cached_count = vote_costs.len();
+
+    // Find missing epochs and auto-estimate them
+    let cached_epochs: std::collections::HashSet<u64> =
+        vote_costs.iter().map(|c| c.epoch).collect();
+    let mut estimated_epochs = Vec::new();
+    for epoch in start_epoch..=end_epoch {
+        if !cached_epochs.contains(&epoch) {
+            let estimate = vote_costs::estimate_vote_cost(epoch);
+            vote_costs.push(estimate);
+            estimated_epochs.push(epoch);
+        }
+    }
+    // Sort by epoch after adding estimates
+    vote_costs.sort_by_key(|c| c.epoch);
+
     if vote_costs.is_empty() {
         println!(
             "  No vote costs cached (use 'vote-costs import' or 'vote-costs estimate' to add)\n"
         );
     } else {
         let total_vote_cost = vote_costs::total_vote_costs_sol(&vote_costs);
-        println!(
-            "  Loaded {} epochs totaling {:.6} SOL in vote fees\n",
-            vote_costs.len(),
-            total_vote_cost
-        );
+        if !estimated_epochs.is_empty() {
+            println!(
+                "  Loaded {} epochs, estimated {} missing ({:?}): {:.6} SOL total\n",
+                cached_count,
+                estimated_epochs.len(),
+                estimated_epochs,
+                total_vote_cost
+            );
+        } else {
+            println!(
+                "  Loaded {} epochs totaling {:.6} SOL in vote fees\n",
+                vote_costs.len(),
+                total_vote_cost
+            );
+        }
     }
 
     // Step 7: Load expenses (database + Notion contractor hours)
@@ -1083,6 +1114,7 @@ async fn fetch_rewards_with_cache(
     config: &config::Config,
     start_epoch: u64,
     end_epoch: u64,
+    current_epoch: u64,
     no_cache: bool,
     dune_api_key: Option<&str>,
 ) -> Result<Vec<transactions::EpochReward>> {
@@ -1094,17 +1126,25 @@ async fn fetch_rewards_with_cache(
         return Ok(rewards);
     }
 
-    // Get cached rewards for completed epochs (exclude current)
-    let mut rewards = cache.get_epoch_rewards(start_epoch, end_epoch).await?;
+    // Only query cache/Dune for completed epochs (current epoch won't have data yet)
+    let completed_end = end_epoch.min(current_epoch.saturating_sub(1));
+
+    // Get cached rewards for completed epochs
+    let mut rewards = cache.get_epoch_rewards(start_epoch, completed_end).await?;
     let cached_count = rewards.len();
 
-    // Find missing epochs
+    // Find missing completed epochs (exclude current - it's always "missing" but not fetchable)
     let missing = cache
-        .get_missing_reward_epochs(start_epoch, end_epoch)
+        .get_missing_reward_epochs(start_epoch, completed_end)
         .await?;
 
     if !missing.is_empty() {
-        println!("    Fetching {} missing epochs...", missing.len());
+        let epoch_word = if missing.len() == 1 {
+            "epoch"
+        } else {
+            "epochs"
+        };
+        println!("    Fetching {} missing {}...", missing.len(), epoch_word);
 
         let mut rpc_failures: Vec<u64> = Vec::new();
 
@@ -1137,13 +1177,64 @@ async fn fetch_rewards_with_cache(
                     if !needed.is_empty() {
                         println!("    Dune returned {} epochs", needed.len());
                         cache.store_epoch_rewards(&needed).await?;
+
+                        // Track which epochs were filled by Dune
+                        let filled_epochs: std::collections::HashSet<u64> =
+                            needed.iter().map(|r| r.epoch).collect();
                         rewards.extend(needed);
+
+                        // Cache epochs that remain unfilled (no data exists)
+                        let unfilled: Vec<_> = rpc_failures
+                            .iter()
+                            .filter(|e| !filled_epochs.contains(e))
+                            .map(|&epoch| transactions::EpochReward {
+                                epoch,
+                                effective_slot: epoch * constants::SLOTS_PER_EPOCH,
+                                amount_lamports: 0,
+                                amount_sol: 0.0,
+                                commission: config.commission_percent,
+                                date: Some(transactions::epoch_to_date(epoch)),
+                            })
+                            .collect();
+
+                        if !unfilled.is_empty() {
+                            println!("    Caching {} epochs with no reward data", unfilled.len());
+                            cache.store_epoch_rewards(&unfilled).await?;
+                        }
+                    } else {
+                        // Dune returned data but none for our requested epochs
+                        let empty_epochs: Vec<_> = rpc_failures
+                            .iter()
+                            .map(|&epoch| transactions::EpochReward {
+                                epoch,
+                                effective_slot: epoch * constants::SLOTS_PER_EPOCH,
+                                amount_lamports: 0,
+                                amount_sol: 0.0,
+                                commission: config.commission_percent,
+                                date: Some(transactions::epoch_to_date(epoch)),
+                            })
+                            .collect();
+                        println!(
+                            "    Caching {} epochs with no reward data",
+                            empty_epochs.len()
+                        );
+                        cache.store_epoch_rewards(&empty_epochs).await?;
                     }
                 }
                 Err(e) => {
                     eprintln!("    Warning: Dune fallback failed: {}", e);
                 }
             }
+        }
+    }
+
+    // Fetch current epoch if requested (always fresh, don't cache, no Dune fallback)
+    // Note: Current epoch rewards are pending until epoch completion
+    if end_epoch >= current_epoch {
+        if let Ok(mut current_rewards) =
+            transactions::fetch_current_epoch_rewards(config, current_epoch).await
+        {
+            rewards.append(&mut current_rewards);
         }
     }
 
@@ -1158,6 +1249,9 @@ async fn fetch_rewards_with_cache(
 }
 
 /// Fetch MEV claims with caching
+///
+/// MEV claims only exist for completed epochs (distributed at epoch boundaries),
+/// so we only need to check for missing completed epochs, not the current epoch.
 async fn fetch_mev_with_cache(
     cache: &Cache,
     config: &config::Config,
@@ -1172,19 +1266,27 @@ async fn fetch_mev_with_cache(
         return Ok(claims);
     }
 
-    // Get cached claims for completed epochs
+    // MEV claims only exist for completed epochs
     let completed_end = end_epoch.min(current_epoch.saturating_sub(1));
+
+    // Get cached claims for completed epochs
     let mut claims = cache.get_mev_claims(start_epoch, completed_end).await?;
     let cached_count = claims.len();
 
-    // Check if we need to fetch fresh data
-    let missing = cache
-        .get_missing_mev_epochs(start_epoch, completed_end)
-        .await?;
-    let need_current = end_epoch >= current_epoch;
+    // Check if we need to fetch from Jito API
+    // The Jito API returns all epochs with MEV for this validator at once.
+    // If we have MEV data for a recent completed epoch, we're up to date.
+    // (Epochs without MEV rewards are not returned by the API, so checking
+    // for "missing" epochs would cause constant re-fetching.)
+    let has_recent_data = claims
+        .iter()
+        .any(|c| c.epoch >= completed_end.saturating_sub(1));
 
-    if !missing.is_empty() || need_current || cached_count == 0 {
-        // Jito API returns all epochs at once, so fetch fresh
+    if !has_recent_data {
+        println!(
+            "    Fetching from Jito API (need data through epoch {})...",
+            completed_end
+        );
         let fresh_claims = jito::fetch_mev_claims(config).await?;
 
         // Store completed epochs in cache
@@ -1193,14 +1295,17 @@ async fn fetch_mev_with_cache(
             .filter(|c| c.epoch < current_epoch)
             .cloned()
             .collect();
-        cache.store_mev_claims(&completed).await?;
+        if !completed.is_empty() {
+            cache.store_mev_claims(&completed).await?;
+            println!("    Cached {} completed epochs", completed.len());
+        }
 
         // Filter to requested range
         claims = fresh_claims
             .into_iter()
             .filter(|c| c.epoch >= start_epoch && c.epoch <= end_epoch)
             .collect();
-    } else if cached_count > 0 {
+    } else {
         println!("    ({} epochs from cache)", cached_count);
     }
 
@@ -1249,9 +1354,15 @@ async fn fetch_leader_fees_with_cache(
     let need_current = end_epoch >= current_epoch;
 
     if !missing.is_empty() {
+        let epoch_word = if missing.len() == 1 {
+            "epoch"
+        } else {
+            "epochs"
+        };
         println!(
-            "    Fetching {} missing epochs (this may take a while)...",
-            missing.len()
+            "    Fetching {} missing {} (this may take a while)...",
+            missing.len(),
+            epoch_word
         );
 
         let mut rpc_failures: Vec<u64> = Vec::new();
@@ -1290,7 +1401,52 @@ async fn fetch_leader_fees_with_cache(
                     if !needed.is_empty() {
                         println!("    Dune returned {} epochs", needed.len());
                         cache.store_leader_fees(&needed).await?;
+
+                        // Track which epochs were filled by Dune
+                        let filled_epochs: std::collections::HashSet<u64> =
+                            needed.iter().map(|f| f.epoch).collect();
                         fees.extend(needed);
+
+                        // Cache epochs that remain unfilled (no data exists)
+                        // This prevents re-querying epochs that genuinely have no leader slots
+                        let unfilled: Vec<_> = rpc_failures
+                            .iter()
+                            .filter(|e| !filled_epochs.contains(e))
+                            .map(|&epoch| leader_fees::EpochLeaderFees {
+                                epoch,
+                                leader_slots: 0,
+                                blocks_produced: 0,
+                                skipped_slots: 0,
+                                total_fees_lamports: 0,
+                                total_fees_sol: 0.0,
+                                date: Some(transactions::epoch_to_date(epoch)),
+                            })
+                            .collect();
+
+                        if !unfilled.is_empty() {
+                            println!("    Caching {} epochs with no leader data", unfilled.len());
+                            cache.store_leader_fees(&unfilled).await?;
+                        }
+                    } else {
+                        // Dune returned data but none for our requested epochs
+                        // Cache the requested epochs as having no data
+                        let empty_epochs: Vec<_> = rpc_failures
+                            .iter()
+                            .map(|&epoch| leader_fees::EpochLeaderFees {
+                                epoch,
+                                leader_slots: 0,
+                                blocks_produced: 0,
+                                skipped_slots: 0,
+                                total_fees_lamports: 0,
+                                total_fees_sol: 0.0,
+                                date: Some(transactions::epoch_to_date(epoch)),
+                            })
+                            .collect();
+                        println!(
+                            "    Caching {} epochs with no leader data",
+                            empty_epochs.len()
+                        );
+                        cache.store_leader_fees(&empty_epochs).await?;
                     }
                 }
                 Err(e) => {
@@ -1406,7 +1562,8 @@ async fn fetch_transfers_with_cache(
     let mut rpc_failed = false;
 
     for (label, account) in transactions::get_tracked_accounts(config) {
-        let latest_slot = cache.get_latest_transfer_slot(label).await?;
+        // Use account progress (tracks highest slot seen, even if no transfers found)
+        let latest_slot = cache.get_account_progress(label).await?;
 
         if verbose {
             println!("    {}: latest cached slot = {:?}", label, latest_slot);
@@ -1422,21 +1579,26 @@ async fn fetch_transfers_with_cache(
         )
         .await
         {
-            Ok(new_transfers) => {
-                if !new_transfers.is_empty() {
+            Ok(result) => {
+                // Store progress even if no transfers found (for accounts with only versioned txs)
+                if let Some(highest_slot) = result.highest_slot_seen {
+                    cache.set_account_progress(label, highest_slot).await?;
+                }
+
+                if !result.transfers.is_empty() {
                     if verbose {
                         println!(
                             "    {}: fetched {} new transfers",
                             label,
-                            new_transfers.len()
+                            result.transfers.len()
                         );
                     }
 
-                    // Store new transfers (all of them, for tracking per-account progress)
-                    cache.store_transfers(&new_transfers, label).await?;
+                    // Store new transfers
+                    cache.store_transfers(&result.transfers, label).await?;
 
                     // Add unique transfers to our collection (deduplicate across accounts)
-                    for transfer in new_transfers {
+                    for transfer in result.transfers {
                         if seen_signatures.insert(transfer.signature.clone()) {
                             new_count += 1;
                             all_transfers.push(transfer);

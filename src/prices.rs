@@ -109,11 +109,13 @@ pub async fn fetch_historical_prices_with_cache(
             }
         }
         Err(e) => {
-            eprintln!("    Warning: Failed to fetch historical prices: {}", e);
+            eprintln!("    ⚠️  WARNING: Failed to fetch historical prices: {}", e);
             eprintln!(
-                "    Using fallback price of ${:.2}",
-                constants::FALLBACK_SOL_PRICE
+                "    ⚠️  Using fallback price of ${:.2} for {} dates",
+                constants::FALLBACK_SOL_PRICE,
+                dates.len()
             );
+            eprintln!("    ⚠️  Financial reports may be inaccurate!");
             // Use fallback price
             for date in &dates {
                 cache.insert(

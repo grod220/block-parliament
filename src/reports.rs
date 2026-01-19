@@ -615,6 +615,15 @@ struct MonthlyData {
     other_expenses_usd: f64,
 }
 
+/// Normalize -0.0 to 0.0 for cleaner display
+fn normalize_zero(val: f64) -> f64 {
+    if val == 0.0 {
+        0.0
+    } else {
+        val
+    }
+}
+
 /// Print summary to console
 pub fn print_summary(data: &ReportData, year_filter: Option<i32>) {
     // Helper to check if a date matches the year filter
@@ -786,6 +795,15 @@ pub fn print_summary(data: &ReportData, year_filter: Option<i32>) {
     let total_revenue_usd = total_commission_usd + total_leader_fees_usd + total_mev_usd;
     let total_expenses_usd = total_vote_costs_net_usd + total_other_expenses;
     let net_profit = total_revenue_usd - total_expenses_usd;
+
+    // Normalize values to avoid displaying -0.0
+    let total_commission_sol = normalize_zero(total_commission_sol);
+    let total_commission_usd = normalize_zero(total_commission_usd);
+    let total_leader_fees_sol = normalize_zero(total_leader_fees_sol);
+    let total_leader_fees_usd = normalize_zero(total_leader_fees_usd);
+    let total_mev_sol = normalize_zero(total_mev_sol);
+    let total_mev_usd = normalize_zero(total_mev_usd);
+    let total_seeding_sol = normalize_zero(total_seeding_sol);
 
     println!("REVENUE:");
     println!(

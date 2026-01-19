@@ -109,6 +109,24 @@ pub async fn fetch_inflation_rewards(
     start_epoch: u64,
     end_epoch: Option<u64>,
 ) -> Result<Vec<EpochReward>> {
+    fetch_inflation_rewards_internal(config, start_epoch, end_epoch, false).await
+}
+
+/// Fetch inflation rewards for current epoch (suppresses expected errors)
+pub async fn fetch_current_epoch_rewards(
+    config: &Config,
+    current_epoch: u64,
+) -> Result<Vec<EpochReward>> {
+    fetch_inflation_rewards_internal(config, current_epoch, Some(current_epoch), true).await
+}
+
+/// Internal function to fetch inflation rewards with optional error suppression
+async fn fetch_inflation_rewards_internal(
+    config: &Config,
+    start_epoch: u64,
+    end_epoch: Option<u64>,
+    suppress_errors: bool,
+) -> Result<Vec<EpochReward>> {
     let client =
         RpcClient::new_with_commitment(config.rpc_url.clone(), CommitmentConfig::confirmed());
 
@@ -135,10 +153,19 @@ pub async fn fetch_inflation_rewards(
                         date: Some(epoch_to_date(epoch)),
                     });
                     println!("    Epoch {}: {:.6} SOL", epoch, amount_sol);
+                } else if suppress_errors {
+                    // Expected for current epoch - rewards not yet distributed
+                    println!(
+                        "    Epoch {} (current): rewards pending epoch completion",
+                        epoch
+                    );
                 }
             }
             Err(e) => {
-                eprintln!("    Epoch {}: Error - {}", epoch, e);
+                if !suppress_errors {
+                    eprintln!("    Epoch {}: Error - {}", epoch, e);
+                }
+                // For current epoch, empty result is expected
             }
         }
     }
@@ -324,15 +351,23 @@ pub async fn fetch_sol_transfers(config: &Config, verbose: bool) -> Result<Vec<S
     Ok(all_transfers)
 }
 
+/// Result of fetching transfers for an account
+pub struct FetchTransfersResult {
+    /// The SOL transfers found
+    pub transfers: Vec<SolTransfer>,
+    /// The highest slot we saw (for progress tracking even if no transfers found)
+    pub highest_slot_seen: Option<u64>,
+}
+
 /// Fetch transfers for a single account, stopping at a specific slot
-/// Returns only transactions newer than stop_at_slot
+/// Returns transfers and the highest slot seen (for progress tracking)
 pub async fn fetch_transfers_for_account(
     config: &Config,
     account: &Pubkey,
     label: &str,
     stop_at_slot: Option<u64>,
     verbose: bool,
-) -> Result<Vec<SolTransfer>> {
+) -> Result<FetchTransfersResult> {
     let client =
         RpcClient::new_with_commitment(config.rpc_url.clone(), CommitmentConfig::confirmed());
 
@@ -346,6 +381,7 @@ pub async fn fetch_transfers_for_account(
     let mut before: Option<Signature> = None;
     let max_signatures = constants::MAX_SIGNATURES_PER_ACCOUNT;
     let mut stopped_at_cached = false;
+    let mut highest_slot_seen: Option<u64> = None;
 
     // Paginate through signatures with retry logic
     let mut retries = 0;
@@ -370,6 +406,12 @@ pub async fn fetch_transfers_for_account(
 
                 if batch.is_empty() {
                     break;
+                }
+
+                // Track the highest slot seen (first signature in batch is most recent)
+                if let Some(first) = batch.first() {
+                    highest_slot_seen =
+                        Some(highest_slot_seen.map_or(first.slot, |h| h.max(first.slot)));
                 }
 
                 // Check if we've hit cached data
@@ -425,7 +467,10 @@ pub async fn fetch_transfers_for_account(
     }
 
     if signatures.is_empty() {
-        return Ok(Vec::new());
+        return Ok(FetchTransfersResult {
+            transfers: Vec::new(),
+            highest_slot_seen,
+        });
     }
 
     // Parse each transaction for SOL transfers
@@ -501,7 +546,10 @@ pub async fn fetch_transfers_for_account(
         transfers_found, processed
     );
 
-    Ok(transfers)
+    Ok(FetchTransfersResult {
+        transfers,
+        highest_slot_seen,
+    })
 }
 
 /// Get the accounts we fetch transactions for (for caching purposes)
@@ -685,9 +733,11 @@ pub fn categorize_transfers(transfers: &[SolTransfer], config: &Config) -> Categ
 /// Convert epoch number to approximate date
 /// Calibrated: epoch 896 = 2025-12-16
 pub fn epoch_to_date(epoch: u64) -> String {
-    let epoch_diff = epoch as i64 - constants::REFERENCE_EPOCH;
-    let timestamp =
-        constants::REFERENCE_EPOCH_TIMESTAMP + (epoch_diff * constants::EPOCH_DURATION_SECONDS);
+    // Use saturating arithmetic to prevent overflow with extreme epoch values
+    let epoch_i64 = epoch.min(i64::MAX as u64) as i64;
+    let epoch_diff = epoch_i64.saturating_sub(constants::REFERENCE_EPOCH);
+    let duration = epoch_diff.saturating_mul(constants::EPOCH_DURATION_SECONDS);
+    let timestamp = constants::REFERENCE_EPOCH_TIMESTAMP.saturating_add(duration);
 
     DateTime::from_timestamp(timestamp, 0)
         .map(|dt| dt.format("%Y-%m-%d").to_string())

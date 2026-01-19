@@ -115,6 +115,15 @@ impl Cache {
             .await
             .context("Failed to open cache database")?;
 
+        // Enable WAL mode for better concurrency and set busy timeout
+        // This prevents SQLITE_BUSY errors when multiple processes access the DB
+        sqlx::query("PRAGMA journal_mode=WAL")
+            .execute(&pool)
+            .await?;
+        sqlx::query("PRAGMA busy_timeout=5000")
+            .execute(&pool)
+            .await?;
+
         let cache = Self { pool };
         cache.init_schema().await?;
 
@@ -263,6 +272,19 @@ impl Cache {
         // Index for quick lookups by account
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_transfers_account ON sol_transfers(account_key)",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "
+            -- Track the highest slot checked per account (even if no transfers found)
+            CREATE TABLE IF NOT EXISTS account_progress (
+                account_key TEXT PRIMARY KEY,
+                highest_slot INTEGER NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            ",
         )
         .execute(&self.pool)
         .await?;
@@ -468,28 +490,6 @@ impl Cache {
                 date: r.date,
             })
             .collect())
-    }
-
-    /// Get epochs missing MEV data
-    pub async fn get_missing_mev_epochs(
-        &self,
-        start_epoch: u64,
-        end_epoch: u64,
-    ) -> Result<Vec<u64>> {
-        let rows: Vec<(i64,)> =
-            sqlx::query_as("SELECT epoch FROM mev_claims WHERE epoch >= ? AND epoch <= ?")
-                .bind(start_epoch as i64)
-                .bind(end_epoch as i64)
-                .fetch_all(&self.pool)
-                .await?;
-
-        let cached: Vec<u64> = rows.into_iter().map(|(e,)| e as u64).collect();
-
-        let missing: Vec<u64> = (start_epoch..=end_epoch)
-            .filter(|e| !cached.contains(e))
-            .collect();
-
-        Ok(missing)
     }
 
     /// Store MEV claims (in a transaction for atomicity)
@@ -759,15 +759,43 @@ impl Cache {
             .collect())
     }
 
-    /// Get the most recent slot for an account's cached transfers
-    pub async fn get_latest_transfer_slot(&self, account_key: &str) -> Result<Option<u64>> {
-        let row: Option<(i64,)> =
+    /// Get the highest slot we've checked for an account (even if no transfers were found)
+    /// This is useful for accounts with only versioned/undecodable transactions
+    pub async fn get_account_progress(&self, account_key: &str) -> Result<Option<u64>> {
+        // Check both account_progress table and sol_transfers, use the higher value
+        let progress_row: Option<(i64,)> =
+            sqlx::query_as("SELECT highest_slot FROM account_progress WHERE account_key = ?")
+                .bind(account_key)
+                .fetch_optional(&self.pool)
+                .await?;
+
+        let transfer_row: Option<(i64,)> =
             sqlx::query_as("SELECT MAX(slot) FROM sol_transfers WHERE account_key = ?")
                 .bind(account_key)
                 .fetch_optional(&self.pool)
                 .await?;
 
-        Ok(row.and_then(|(slot,)| if slot > 0 { Some(slot as u64) } else { None }))
+        let progress_slot = progress_row.map(|(s,)| s as u64);
+        let transfer_slot = transfer_row.and_then(|(s,)| if s > 0 { Some(s as u64) } else { None });
+
+        Ok(match (progress_slot, transfer_slot) {
+            (Some(p), Some(t)) => Some(p.max(t)),
+            (Some(p), None) => Some(p),
+            (None, Some(t)) => Some(t),
+            (None, None) => None,
+        })
+    }
+
+    /// Store the highest slot we've checked for an account
+    pub async fn set_account_progress(&self, account_key: &str, highest_slot: u64) -> Result<()> {
+        sqlx::query(
+            "INSERT OR REPLACE INTO account_progress (account_key, highest_slot) VALUES (?, ?)",
+        )
+        .bind(account_key)
+        .bind(highest_slot as i64)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
     }
 
     /// Store transfers for a specific account (in a transaction for atomicity)

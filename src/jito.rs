@@ -48,18 +48,26 @@ pub async fn fetch_mev_claims(config: &Config) -> Result<Vec<MevClaim>> {
     );
     println!("    Querying Jito API...");
 
-    // Retry with exponential backoff
-    let max_retries = 3;
+    // Retry with exponential backoff (longer delays for rate limiting)
+    let max_retries = 4;
     let mut last_error = None;
+    let mut was_rate_limited = false;
 
     for attempt in 0..max_retries {
         if attempt > 0 {
-            let delay = Duration::from_secs(2u64.pow(attempt as u32));
+            // Use longer backoff for rate limiting (30s base) vs normal errors (2s base)
+            let base_delay = if was_rate_limited { 30 } else { 2 };
+            let delay = Duration::from_secs(base_delay * 2u64.pow(attempt as u32 - 1));
             println!(
-                "    Retry {}/{} after {:?}...",
+                "    Retry {}/{} after {:?}{}...",
                 attempt,
                 max_retries - 1,
-                delay
+                delay,
+                if was_rate_limited {
+                    " (rate limited)"
+                } else {
+                    ""
+                }
             );
             sleep(delay).await;
         }
@@ -76,10 +84,12 @@ pub async fn fetch_mev_claims(config: &Config) -> Result<Vec<MevClaim>> {
                     let epochs: Vec<JitoEpochData> = response.json().await?;
                     return process_jito_epochs(epochs);
                 } else if response.status().as_u16() == 429 {
-                    // Rate limited - always retry
+                    // Rate limited - use longer backoff
+                    was_rate_limited = true;
                     last_error = Some(anyhow::anyhow!("Rate limited (429)"));
                     continue;
                 } else {
+                    was_rate_limited = false;
                     last_error = Some(anyhow::anyhow!(
                         "Jito API returned status: {}",
                         response.status()
@@ -87,6 +97,7 @@ pub async fn fetch_mev_claims(config: &Config) -> Result<Vec<MevClaim>> {
                 }
             }
             Err(e) => {
+                was_rate_limited = false;
                 last_error = Some(anyhow::anyhow!("Request failed: {}", e));
             }
         }

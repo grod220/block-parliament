@@ -86,9 +86,14 @@ pub async fn fetch_leader_fees(
     let current_epoch = get_current_epoch(&client, &config.rpc_url).await?;
     let end = end_epoch.unwrap_or(current_epoch);
 
+    let epoch_word = if start_epoch == end {
+        "epoch"
+    } else {
+        "epochs"
+    };
     println!(
-        "    Fetching leader fees for epochs {}-{}...",
-        start_epoch, end
+        "    Fetching leader fees for {} {}-{}...",
+        epoch_word, start_epoch, end
     );
 
     let mut all_fees = Vec::new();

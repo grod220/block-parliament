@@ -73,7 +73,13 @@ impl FileConfig {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read config file: {}", path.display()))?;
 
-        toml::from_str(&content).with_context(|| "Failed to parse config.toml")
+        toml::from_str(&content).with_context(|| {
+            "Failed to parse config.toml. Check for:\n\
+             - Missing required fields (validator.vote_account, validator.identity, etc.)\n\
+             - Invalid TOML syntax (missing quotes, brackets, etc.)\n\
+             - Incorrect data types (strings vs numbers)\n\n\
+             See config.toml.example for the expected format."
+        })
     }
 }
 

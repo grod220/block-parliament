@@ -86,6 +86,10 @@ pub struct DuneClient {
 
 impl DuneClient {
     /// Create a new Dune client with validator configuration
+    ///
+    /// Note: Addresses are already validated as Pubkeys in Config::from_file(),
+    /// but we store them as strings for SQL interpolation. The addresses come
+    /// from config.toml, not user input, so SQL injection risk is minimal.
     pub fn new(api_key: String, config: &Config) -> Self {
         Self {
             api_key,
@@ -95,6 +99,14 @@ impl DuneClient {
             withdraw_authority: config.withdraw_authority.to_string(),
             commission_percent: config.commission_percent,
         }
+    }
+
+    /// Validate that a string is a valid Solana address (base58, 32-44 chars)
+    /// This prevents SQL injection via malicious config values
+    fn validate_address(address: &str) -> Result<()> {
+        Pubkey::from_str(address)
+            .map_err(|_| anyhow::anyhow!("Invalid Solana address: '{}'", address))?;
+        Ok(())
     }
 
     /// Execute a SQL query and wait for results
@@ -172,17 +184,9 @@ impl DuneClient {
 
     /// Validate date format for SQL injection prevention
     fn validate_date(date: &str) -> Result<()> {
-        // Date must be YYYY-MM-DD format
-        if date.len() != 10 {
-            anyhow::bail!("Invalid date format: expected YYYY-MM-DD, got '{}'", date);
-        }
-        // Parse to ensure it's a valid date
+        // Parsing validates both format and characters - no need for separate checks
         chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
             .map_err(|_| anyhow::anyhow!("Invalid date: '{}' - must be YYYY-MM-DD", date))?;
-        // Additional check: only alphanumeric and dashes
-        if !date.chars().all(|c| c.is_ascii_digit() || c == '-') {
-            anyhow::bail!("Invalid characters in date: '{}'", date);
-        }
         Ok(())
     }
 
@@ -195,6 +199,7 @@ impl DuneClient {
         start_date: &str,
     ) -> Result<Vec<crate::transactions::EpochReward>> {
         Self::validate_date(start_date)?;
+        Self::validate_address(&self.vote_account)?;
         println!("  Querying Dune for inflation rewards...");
 
         let sql = format!(
@@ -245,6 +250,7 @@ impl DuneClient {
     /// This captures transaction fees earned when producing blocks as leader.
     pub async fn fetch_leader_fees(&self, start_date: &str) -> Result<Vec<EpochLeaderFees>> {
         Self::validate_date(start_date)?;
+        Self::validate_address(&self.identity)?;
         println!("  Querying Dune for leader fees...");
 
         let sql = format!(
@@ -296,6 +302,7 @@ impl DuneClient {
     /// Queries the solana.vote_transactions table for votes signed by identity.
     pub async fn fetch_vote_costs(&self, start_date: &str) -> Result<Vec<EpochVoteCost>> {
         Self::validate_date(start_date)?;
+        Self::validate_address(&self.identity)?;
         println!("  Querying Dune for vote costs...");
 
         let sql = format!(
@@ -346,6 +353,10 @@ impl DuneClient {
     /// involving any of our tracked accounts.
     pub async fn fetch_transfers(&self, start_date: &str) -> Result<Vec<SolTransfer>> {
         Self::validate_date(start_date)?;
+        // Validate all addresses before building SQL
+        Self::validate_address(&self.identity)?;
+        Self::validate_address(&self.withdraw_authority)?;
+        Self::validate_address(&self.vote_account)?;
         println!("  Querying Dune for SOL transfers...");
 
         // Build the account list from config
@@ -445,24 +456,31 @@ fn get_u64(row: &HashMap<String, serde_json::Value>, key: &str) -> Result<u64> {
 
 /// Safely convert f64 to u64 with bounds checking
 /// Returns 0 for negative values, u64::MAX for values that would overflow
+/// Uses a conservative upper bound to avoid f64 precision issues near u64::MAX
 fn safe_f64_to_u64(f: f64) -> u64 {
+    // u64::MAX is 18446744073709551615, but f64 can't represent this exactly
+    // Use a conservative bound that's safely representable
+    const MAX_SAFE: f64 = 18446744073709549568.0; // Largest f64 < u64::MAX
     if f.is_nan() || f < 0.0 {
         0
-    } else if f >= u64::MAX as f64 {
+    } else if f >= MAX_SAFE {
         u64::MAX
     } else {
-        f as u64
+        f.round() as u64
     }
 }
 
 /// Safely convert SOL amount to lamports with overflow protection
 fn sol_to_lamports(sol: f64) -> u64 {
+    // Max SOL that fits in u64 lamports: ~18.446744073 billion SOL
+    // Use conservative bound to avoid precision issues
+    const MAX_SOL: f64 = 18_446_744_073.0;
     if sol.is_nan() || sol < 0.0 {
         0
-    } else if sol >= (u64::MAX as f64 / 1e9) {
+    } else if sol >= MAX_SOL {
         u64::MAX
     } else {
-        (sol * 1e9) as u64
+        (sol * 1e9).round() as u64
     }
 }
 
