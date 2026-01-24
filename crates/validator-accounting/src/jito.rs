@@ -121,7 +121,7 @@ fn process_jito_epochs(epochs: Vec<JitoEpochData>) -> Result<Vec<MevClaim>> {
     }
 
     // Sort by epoch
-    claims.sort_by(|a, b| a.epoch.cmp(&b.epoch));
+    claims.sort_by_key(|a| a.epoch);
 
     Ok(claims)
 }

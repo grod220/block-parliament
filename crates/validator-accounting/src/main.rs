@@ -1721,7 +1721,7 @@ async fn fetch_transfers_with_cache(
     }
 
     // Sort by slot (newest first, matching the original behavior)
-    all_transfers.sort_by(|a, b| b.slot.cmp(&a.slot));
+    all_transfers.sort_by_key(|a| std::cmp::Reverse(a.slot));
 
     Ok(all_transfers)
 }

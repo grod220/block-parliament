@@ -320,7 +320,7 @@ pub async fn fetch_sol_transfers(config: &Config, verbose: bool) -> Result<Vec<S
     });
 
     // Sort by timestamp (oldest first)
-    all_transfers.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+    all_transfers.sort_by_key(|a| a.timestamp);
 
     Ok(all_transfers)
 }
