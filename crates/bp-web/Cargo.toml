@@ -39,3 +39,8 @@ ssr = [
     "dep:http",
     "leptos/ssr",
 ]
+
+[package.metadata.leptos]
+site-root = "target/site"
+site-pkg-dir = "pkg"
+site-addr = "127.0.0.1:3000"
