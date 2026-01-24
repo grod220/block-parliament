@@ -1,27 +1,24 @@
 use leptos::prelude::*;
-#[cfg(feature = "hydrate")]
-use wasm_bindgen::JsCast;
 
 const SHADES: &[char] = &['\u{2592}', '\u{2591}']; // ▒ and ░
 const SEGMENT: &str = " - - - "; // 3 dashes with spaces
 
+/// Get a random shade character (client-side only)
 #[cfg(feature = "hydrate")]
 fn get_random_shade() -> char {
     let idx = (js_sys::Math::random() * SHADES.len() as f64) as usize;
     SHADES[idx.min(SHADES.len() - 1)]
 }
 
-#[cfg(not(feature = "hydrate"))]
-fn get_random_shade() -> char {
-    // On server, just alternate
-    SHADES[0]
-}
-
-fn generate_initial_line(length: usize) -> String {
+/// Generate initial line DETERMINISTICALLY for SSR/hydration match
+fn generate_static_line(length: usize) -> String {
     let mut line = String::with_capacity(length + 10);
+    let mut shade_idx = 0;
     while line.len() < length {
-        line.push(get_random_shade());
+        // Alternate shades deterministically
+        line.push(SHADES[shade_idx % SHADES.len()]);
         line.push_str(SEGMENT);
+        shade_idx += 1;
     }
     line
 }
@@ -39,22 +36,25 @@ fn prefers_reduced_motion() -> bool {
 /// Animated line component that scrolls ASCII characters
 #[component]
 fn AnimatedLine() -> impl IntoView {
+    // CRITICAL: Use deterministic initial state for both SSR and hydrate
+    // This prevents hydration mismatch
     #[cfg(feature = "hydrate")]
-    let (line, set_line) = signal(generate_initial_line(50));
+    let (line, set_line) = signal(generate_static_line(50));
     #[cfg(not(feature = "hydrate"))]
-    let line = signal(generate_initial_line(50)).0;
+    let (line, _) = signal(generate_static_line(50));
 
-    // Only run animation on client
+    // Only run animation on client, and clean up on unmount
     #[cfg(feature = "hydrate")]
     {
-        let reduced_motion = prefers_reduced_motion();
+        use wasm_bindgen::JsCast;
 
         Effect::new(move |_| {
-            if reduced_motion {
+            if prefers_reduced_motion() {
                 return;
             }
 
             let window = web_sys::window().expect("no window");
+
             let callback = wasm_bindgen::closure::Closure::wrap(Box::new(move || {
                 set_line.update(|prev| {
                     if prev.len() > 1 {
@@ -67,10 +67,19 @@ fn AnimatedLine() -> impl IntoView {
                 });
             }) as Box<dyn FnMut()>);
 
-            let _ =
-                window.set_interval_with_callback_and_timeout_and_arguments_0(callback.as_ref().unchecked_ref(), 400);
+            let interval_id = window
+                .set_interval_with_callback_and_timeout_and_arguments_0(callback.as_ref().unchecked_ref(), 400)
+                .expect("failed to set interval");
 
+            // Store callback to prevent it from being dropped
             callback.forget();
+
+            // Clean up interval on component unmount
+            on_cleanup(move || {
+                if let Some(window) = web_sys::window() {
+                    window.clear_interval_with_handle(interval_id);
+                }
+            });
         });
     }
 

@@ -48,10 +48,25 @@ pub async fn get_validator_data() -> Option<StakewizValidator> {
 
     // Stakewiz returns `false` for unknown validators
     if text == "false" {
+        #[cfg(feature = "ssr")]
+        eprintln!("Stakewiz: validator not found for {}", CONFIG.vote_account);
         return None;
     }
 
-    serde_json::from_str(&text).ok()
+    match serde_json::from_str(&text) {
+        Ok(validator) => Some(validator),
+        Err(e) => {
+            #[cfg(feature = "ssr")]
+            eprintln!(
+                "Stakewiz: failed to parse response: {}. First 200 chars: {}",
+                e,
+                &text[..text.len().min(200)]
+            );
+            #[cfg(feature = "hydrate")]
+            web_sys::console::error_1(&format!("Stakewiz parse error: {}", e).into());
+            None
+        }
+    }
 }
 
 /// Format stake in SOL with commas

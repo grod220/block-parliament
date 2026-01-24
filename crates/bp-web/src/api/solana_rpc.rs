@@ -6,14 +6,10 @@ const RPC_ENDPOINT: &str = "https://api.mainnet-beta.solana.com";
 
 /// Network comparison stats for a validator
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[allow(dead_code)]
 pub struct NetworkComparison {
     pub total_validators: usize,
     pub skip_rate_percentile: u8,
-    pub vote_success_percentile: u8,
     pub stake_percentile: u8,
-    pub network_avg_skip_rate: f64,
-    pub network_avg_vote_success: f64,
 }
 
 #[derive(Serialize)]
@@ -41,11 +37,7 @@ struct VoteAccount {
 }
 
 /// Fetch network comparison data using getVoteAccounts
-pub async fn get_network_comparison(
-    current_skip_rate: f64,
-    _current_vote_success: f64,
-    current_stake: f64,
-) -> Option<NetworkComparison> {
+pub async fn get_network_comparison(current_skip_rate: f64, current_stake: f64) -> Option<NetworkComparison> {
     let request = RpcRequest {
         jsonrpc: "2.0",
         id: 1,
@@ -75,23 +67,17 @@ pub async fn get_network_comparison(
         + 1;
     let stake_percentile = ((stake_rank as f64 / total_validators as f64) * 100.0).round() as u8;
 
-    // Network averages (typical values)
-    let network_avg_skip_rate = 0.2;
-    let network_avg_vote_success = 99.5;
-
-    // Estimate skip rate percentile
-    let skip_rate_percentile = if current_skip_rate <= network_avg_skip_rate {
-        ((1.0 - (current_skip_rate / network_avg_skip_rate) * 0.5) * 50.0).round() as u8
+    // Estimate skip rate percentile based on typical network average
+    const NETWORK_AVG_SKIP_RATE: f64 = 0.2;
+    let skip_rate_percentile = if current_skip_rate <= NETWORK_AVG_SKIP_RATE {
+        ((1.0 - (current_skip_rate / NETWORK_AVG_SKIP_RATE) * 0.5) * 50.0).round() as u8
     } else {
-        (50.0 + (current_skip_rate / network_avg_skip_rate - 1.0) * 50.0).round() as u8
+        (50.0 + (current_skip_rate / NETWORK_AVG_SKIP_RATE - 1.0) * 50.0).round() as u8
     };
 
     Some(NetworkComparison {
         total_validators,
         skip_rate_percentile: skip_rate_percentile.clamp(1, 100),
-        vote_success_percentile: 10, // Placeholder
         stake_percentile: stake_percentile.clamp(1, 100),
-        network_avg_skip_rate,
-        network_avg_vote_success,
     })
 }

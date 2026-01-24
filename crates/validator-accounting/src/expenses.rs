@@ -164,7 +164,7 @@ pub fn expand_recurring_expenses(
 
             if current_month_start >= rec_start_month {
                 // Check end date if present
-                let within_end = rec_end.map_or(true, |end_date| {
+                let within_end = rec_end.is_none_or(|end_date| {
                     let end_month_start = NaiveDate::from_ymd_opt(end_date.year(), end_date.month(), 1).unwrap();
                     current_month_start <= end_month_start
                 });

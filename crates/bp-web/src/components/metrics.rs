@@ -1,45 +1,51 @@
 use crate::config::CONFIG;
 use leptos::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use crate::api::{
     JitoMevHistory, NetworkComparison, SfdpStatus, StakewizValidator, format_lamports_to_sol, format_percent,
-    format_stake, get_jito_mev_history, get_network_comparison, get_sfdp_status, get_validator_data,
+    format_stake,
 };
 
 /// All data needed for metrics display
-#[derive(Clone)]
-struct MetricsData {
-    validator: StakewizValidator,
-    mev_history: Option<JitoMevHistory>,
-    network_comp: Option<NetworkComparison>,
-    sfdp_status: Option<SfdpStatus>,
+#[derive(Clone, Serialize, Deserialize)]
+pub struct MetricsData {
+    pub validator: StakewizValidator,
+    pub mev_history: Option<JitoMevHistory>,
+    pub network_comp: Option<NetworkComparison>,
+    pub sfdp_status: Option<SfdpStatus>,
 }
 
-/// Fetch all metrics data
-async fn fetch_all_metrics() -> Option<MetricsData> {
-    // Fetch Stakewiz data first (required)
-    let validator = get_validator_data().await?;
+/// Server function to fetch all metrics data
+/// This runs on the server during SSR, avoiding CORS issues
+#[server(FetchMetrics)]
+pub async fn fetch_metrics() -> Result<Option<MetricsData>, ServerFnError> {
+    use crate::api::{get_jito_mev_history, get_network_comparison, get_sfdp_status, get_validator_data};
 
-    // Fetch additional data - each can fail independently
+    // Fetch Stakewiz data first (required)
+    let Some(validator) = get_validator_data().await else {
+        return Ok(None);
+    };
+
+    // Fetch additional data in parallel - each can fail independently
     let (mev_result, sfdp_result, network_result) = futures::join!(
         get_jito_mev_history(5),
         get_sfdp_status(),
-        get_network_comparison(validator.skip_rate, validator.vote_success, validator.activated_stake),
+        get_network_comparison(validator.skip_rate, validator.activated_stake),
     );
 
-    Some(MetricsData {
+    Ok(Some(MetricsData {
         validator,
         mev_history: mev_result,
         network_comp: network_result,
         sfdp_status: sfdp_result,
-    })
+    }))
 }
 
 /// Metrics component - displays validator stats
-/// Ported from Metrics.tsx
 #[component]
 pub fn Metrics() -> impl IntoView {
-    let metrics = LocalResource::new(fetch_all_metrics);
+    let metrics = Resource::new(|| (), |_| fetch_metrics());
 
     view! {
         <Suspense fallback=move || view! {
@@ -48,8 +54,8 @@ pub fn Metrics() -> impl IntoView {
             {move || {
                 metrics.get().map(|result| {
                     match result {
-                        Some(data) => view! { <MetricsContent data=data.clone() /> }.into_any(),
-                        None => view! {
+                        Ok(Some(data)) => view! { <MetricsContent data=data /> }.into_any(),
+                        Ok(None) | Err(_) => view! {
                             <div class="text-[var(--ink-light)]">
                                 "Live metrics unavailable. See "
                                 <a href=CONFIG.links.stakewiz>"Stakewiz"</a>
