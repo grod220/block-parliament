@@ -13,8 +13,7 @@ mod ssr {
     static HTTP_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
 
     /// Simple in-memory cache with TTL
-    static CACHE: std::sync::OnceLock<RwLock<HashMap<String, CacheEntry>>> =
-        std::sync::OnceLock::new();
+    static CACHE: std::sync::OnceLock<RwLock<HashMap<String, CacheEntry>>> = std::sync::OnceLock::new();
 
     // Cache configuration
     const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(60); // 1 minute default
@@ -73,11 +72,7 @@ mod ssr {
 
             // If still over limit, evict oldest entries (LRU)
             while cache.len() >= MAX_CACHE_ENTRIES {
-                if let Some(oldest_key) = cache
-                    .iter()
-                    .min_by_key(|(_, v)| v.inserted_at)
-                    .map(|(k, _)| k.clone())
-                {
+                if let Some(oldest_key) = cache.iter().min_by_key(|(_, v)| v.inserted_at).map(|(k, _)| k.clone()) {
                     cache.remove(&oldest_key);
                 } else {
                     break;

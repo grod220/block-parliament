@@ -3,7 +3,7 @@
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use axum::Router;
     use leptos::prelude::*;
-    use leptos_axum::{generate_route_list, LeptosRoutes};
+    use leptos_axum::{LeptosRoutes, generate_route_list};
     use tower_http::compression::CompressionLayer;
     use tower_http::services::ServeDir;
 
