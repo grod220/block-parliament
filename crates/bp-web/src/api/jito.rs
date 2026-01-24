@@ -1,8 +1,12 @@
-use crate::config::CONFIG;
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "ssr")]
+use crate::config::CONFIG;
+
+#[cfg(feature = "ssr")]
 use super::http::get_text;
 
+#[cfg(feature = "ssr")]
 const JITO_API_BASE: &str = "https://kobe.mainnet.jito.network";
 
 /// Single epoch reward data from Jito
@@ -42,6 +46,7 @@ pub struct JitoMevHistory {
 }
 
 /// Raw API response - can be array or object with epochs
+#[cfg(feature = "ssr")]
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum JitoApiResponse {
@@ -50,18 +55,22 @@ enum JitoApiResponse {
 }
 
 /// Fetch MEV rewards history from Jito API
+#[cfg(feature = "ssr")]
 pub async fn get_jito_mev_history(epoch_count: usize) -> Option<JitoMevHistory> {
     let url = format!("{}/api/v1/validators/{}", JITO_API_BASE, CONFIG.vote_account);
 
     let text = get_text(&url).await?;
     let data: JitoApiResponse = serde_json::from_str(&text).ok()?;
 
-    let epochs_array = match data {
+    let mut epochs_array = match data {
         JitoApiResponse::Array(arr) => arr,
         JitoApiResponse::Object { epochs } => epochs.unwrap_or_default(),
     };
 
-    // Take last N epochs
+    // Sort by epoch number ascending to ensure correct ordering regardless of API response order
+    epochs_array.sort_by_key(|e| e.epoch);
+
+    // Take last N epochs (most recent)
     let epochs: Vec<JitoEpochReward> = epochs_array
         .into_iter()
         .rev()

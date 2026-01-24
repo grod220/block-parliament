@@ -1,6 +1,9 @@
-use crate::config::CONFIG;
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "ssr")]
+use crate::config::CONFIG;
+
+#[cfg(feature = "ssr")]
 use super::http::get_text;
 
 /// Stakewiz validator data response
@@ -41,6 +44,7 @@ pub struct StakewizValidator {
 }
 
 /// Fetch validator data from Stakewiz API
+#[cfg(feature = "ssr")]
 pub async fn get_validator_data() -> Option<StakewizValidator> {
     let url = format!("https://api.stakewiz.com/validator/{}", CONFIG.vote_account);
 
@@ -48,7 +52,6 @@ pub async fn get_validator_data() -> Option<StakewizValidator> {
 
     // Stakewiz returns `false` for unknown validators
     if text == "false" {
-        #[cfg(feature = "ssr")]
         eprintln!("Stakewiz: validator not found for {}", CONFIG.vote_account);
         return None;
     }
@@ -56,14 +59,11 @@ pub async fn get_validator_data() -> Option<StakewizValidator> {
     match serde_json::from_str(&text) {
         Ok(validator) => Some(validator),
         Err(e) => {
-            #[cfg(feature = "ssr")]
             eprintln!(
                 "Stakewiz: failed to parse response: {}. First 200 chars: {}",
                 e,
                 &text[..text.len().min(200)]
             );
-            #[cfg(feature = "hydrate")]
-            web_sys::console::error_1(&format!("Stakewiz parse error: {}", e).into());
             None
         }
     }

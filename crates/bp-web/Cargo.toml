@@ -6,9 +6,6 @@ edition.workspace = true
 [lints]
 workspace = true
 
-[lib]
-crate-type = ["cdylib", "rlib"]
-
 [[bin]]
 name = "bp-web"
 path = "src/main.rs"
@@ -27,16 +24,8 @@ tokio = { workspace = true, optional = true }
 leptos_axum = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 tower = { workspace = true, optional = true }
-tower-http = { workspace = true, optional = true }
+tower-http = { workspace = true, optional = true, features = ["compression-gzip", "compression-br"] }
 http = { workspace = true, optional = true }
-
-# Client/WASM dependencies (hydrate feature)
-wasm-bindgen = { workspace = true, optional = true }
-wasm-bindgen-futures = { workspace = true, optional = true }
-console_error_panic_hook = { workspace = true, optional = true }
-js-sys = { workspace = true, optional = true }
-web-sys = { workspace = true, optional = true }
-gloo-net = { workspace = true, optional = true }
 
 [features]
 default = []
@@ -50,43 +39,3 @@ ssr = [
     "dep:http",
     "leptos/ssr",
 ]
-hydrate = [
-    "dep:wasm-bindgen",
-    "dep:wasm-bindgen-futures",
-    "dep:console_error_panic_hook",
-    "dep:js-sys",
-    "dep:web-sys",
-    "dep:gloo-net",
-    "leptos/hydrate",
-]
-
-# cargo-leptos configuration
-[package.metadata.leptos]
-# Name of the output files (WASM, JS, CSS)
-output-name = "bp-web"
-
-# Site root relative to crate root
-site-root = "target/site"
-
-# Assets directory
-site-pkg-dir = "pkg"
-
-# Where compiled CSS will be placed
-style-file = "style/main.css"
-
-# Tailwind configuration (v4)
-tailwind-input-file = "style/tailwind.css"
-
-# Server settings
-site-addr = "127.0.0.1:3000"
-reload-port = 3001
-
-# Features
-bin-features = ["ssr"]
-lib-features = ["hydrate"]
-
-# The bin target for cargo-leptos to use
-bin-target = "bp-web"
-
-# wasm-opt level for release builds
-lib-profile-release = "release"

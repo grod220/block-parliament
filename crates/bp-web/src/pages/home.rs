@@ -1,6 +1,5 @@
 use crate::config::CONFIG;
 use leptos::prelude::*;
-use leptos_router::components::A;
 
 use crate::components::{AnimatedGradientDashBorder, Metrics, Section};
 
@@ -53,7 +52,7 @@ pub fn HomePage() -> impl IntoView {
             <Section id="pages" title="Pages">
                 <div class="space-y-1">
                     <div>
-                        <A href="/security">"security policy"</A>
+                        <a href="/security">"security policy"</a>
                     </div>
                 </div>
             </Section>
@@ -62,18 +61,18 @@ pub fn HomePage() -> impl IntoView {
             <Section id="links" title="External Links">
                 <div class="space-y-1">
                     <div>
-                        <a href=CONFIG.links.stakewiz target="_blank" rel="noopener noreferrer">
-                            "stakewiz ↗"
-                        </a>
-                    </div>
-                    <div>
-                        <a href=CONFIG.links.solscan target="_blank" rel="noopener noreferrer">
-                            "solscan ↗"
-                        </a>
-                    </div>
-                    <div>
                         <a href=CONFIG.links.validators_app target="_blank" rel="noopener noreferrer">
                             "validators.app ↗"
+                        </a>
+                    </div>
+                    <div>
+                        <a href=CONFIG.links.ibrl target="_blank" rel="noopener noreferrer">
+                            "ibrl ↗"
+                        </a>
+                    </div>
+                    <div>
+                        <a href=CONFIG.links.stakewiz target="_blank" rel="noopener noreferrer">
+                            "stakewiz ↗"
                         </a>
                     </div>
                     <div>
@@ -87,8 +86,8 @@ pub fn HomePage() -> impl IntoView {
                         </a>
                     </div>
                     <div>
-                        <a href=CONFIG.links.ibrl target="_blank" rel="noopener noreferrer">
-                            "ibrl ↗"
+                        <a href=CONFIG.links.solscan target="_blank" rel="noopener noreferrer">
+                            "solscan ↗"
                         </a>
                     </div>
                 </div>

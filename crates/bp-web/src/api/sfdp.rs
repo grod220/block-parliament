@@ -1,8 +1,12 @@
-use crate::config::CONFIG;
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "ssr")]
+use crate::config::CONFIG;
+
+#[cfg(feature = "ssr")]
 use super::http::get_json;
 
+#[cfg(feature = "ssr")]
 const SFDP_API: &str = "https://api.solana.org/api/community/v1/sfdp_participants";
 
 /// SFDP (Solana Foundation Delegation Program) status
@@ -15,6 +19,7 @@ pub struct SfdpStatus {
     pub onboarding_date: Option<String>,
 }
 
+#[cfg(feature = "ssr")]
 #[derive(Deserialize)]
 struct SfdpParticipant {
     identity: Option<String>,
@@ -25,6 +30,7 @@ struct SfdpParticipant {
 }
 
 /// Check SFDP participation status
+#[cfg(feature = "ssr")]
 pub async fn get_sfdp_status() -> Option<SfdpStatus> {
     let participants: Vec<SfdpParticipant> = get_json(SFDP_API).await?;
 

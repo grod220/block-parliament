@@ -1,6 +1,5 @@
 use crate::config::CONFIG;
 use leptos::prelude::*;
-use leptos_router::components::A;
 
 use crate::components::Section;
 
@@ -27,7 +26,7 @@ pub fn SecurityPage() -> impl IntoView {
                     </div>
                 </div>
                 <div class="mt-4 text-center">
-                    <A href="/" attr:class="text-sm">"← back to home"</A>
+                    <a href="/" class="text-sm">"← back to home"</a>
                 </div>
             </header>
 
@@ -267,7 +266,7 @@ pub fn SecurityPage() -> impl IntoView {
 
             // Footer
             <footer class="mt-12 pt-4 border-t border-dashed border-[var(--rule)] text-center text-[var(--ink-light)] text-sm">
-                <A href="/">"← back to home"</A>
+                <a href="/">"← back to home"</a>
             </footer>
         </main>
     }

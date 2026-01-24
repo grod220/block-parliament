@@ -1,12 +1,16 @@
 #[cfg(feature = "ssr")]
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use axum::Router;
     use leptos::prelude::*;
-    use leptos_axum::{LeptosRoutes, generate_route_list};
+    use leptos_axum::{generate_route_list, LeptosRoutes};
+    use tower_http::compression::CompressionLayer;
     use tower_http::services::ServeDir;
 
-    let conf = get_configuration(None).unwrap();
+    let conf = get_configuration(None).map_err(|e| {
+        eprintln!("Failed to load Leptos configuration: {}", e);
+        e
+    })?;
     let leptos_options = conf.leptos_options;
     let addr = leptos_options.site_addr;
     let routes = generate_route_list(bp_web::app::App);
@@ -14,10 +18,8 @@ async fn main() {
     let site_root = leptos_options.site_root.clone();
     let app = Router::new()
         .leptos_routes(&leptos_options, routes, {
-            let leptos_options = leptos_options.clone();
             move || {
                 use bp_web::app::App;
-                use leptos::hydration::{AutoReload, HydrationScripts};
                 view! {
                     <!DOCTYPE html>
                     <html lang="en">
@@ -28,8 +30,6 @@ async fn main() {
                             <meta name="theme-color" content="#f8f6f1" />
                             <meta name="description" content="Block Parliament - Solana validator operated by an Anza core developer. 5% commission, Jito MEV enabled." />
                             <title>"Block Parliament - Anza Core Dev Validator"</title>
-                            <AutoReload options=leptos_options.clone() />
-                            <HydrationScripts options=leptos_options.clone() />
                             <link rel="stylesheet" href="/pkg/bp-web.css" />
                         </head>
                         <body>
@@ -40,15 +40,25 @@ async fn main() {
             }
         })
         .fallback_service(ServeDir::new(&*site_root))
+        .layer(CompressionLayer::new())
         .with_state(leptos_options);
 
-    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+    let listener = tokio::net::TcpListener::bind(&addr).await.map_err(|e| {
+        eprintln!("Failed to bind to {}: {}", addr, e);
+        e
+    })?;
+
     println!("Listening on http://{}", addr);
-    axum::serve(listener, app).await.unwrap();
+
+    axum::serve(listener, app).await.map_err(|e| {
+        eprintln!("Server error: {}", e);
+        e
+    })?;
+
+    Ok(())
 }
 
 #[cfg(not(feature = "ssr"))]
 fn main() {
-    // Client-side entry point is in lib.rs (hydrate function)
-    // This main only runs for cargo check without features
+    // SSR-only: no client-side entry point needed
 }

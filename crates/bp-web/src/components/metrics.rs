@@ -117,7 +117,7 @@ fn MetricsContent(data: MetricsData) -> impl IntoView {
                 <br />
                 <strong>"COMMISSION"</strong> " " {v.commission} "%"
                 <br />
-                <strong>"JITO MEV FEE"</strong> " " {v.jito_commission_bps / 100} "%"
+                <strong>"JITO MEV FEE"</strong> " " {format!("{:.1}", v.jito_commission_bps as f64 / 100.0)} "%"
             </div>
 
             // Performance

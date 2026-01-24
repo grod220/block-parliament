@@ -78,6 +78,42 @@ a:hover {
   animation: flow 2s ease-in-out infinite;
 }
 
+/* Ticker animation - discrete character-by-character scrolling */
+/* Mimics the original React setInterval(400ms) behavior */
+
+.ticker {
+  /* Display window: matches original's ~20 visible characters */
+  width: 20ch;
+  overflow: hidden;
+  display: inline-block;
+  white-space: pre;
+  line-height: 1;
+}
+
+.ticker__track {
+  display: inline-block;
+  white-space: pre;
+  color: var(--ink-light);
+
+  /* Animation: shift by full 64-char pattern for seamless loop */
+  /* 64 chars × 400ms = 25.6s per full cycle */
+  animation: ticker-shift 25.6s steps(64, end) infinite;
+}
+
+/* Desynchronize left and right sides like independent React components */
+.ticker__track--left {
+  animation-delay: 0s;
+}
+
+.ticker__track--right {
+  animation-delay: -7.2s;  /* Offset by ~18 steps to desync */
+}
+
+@keyframes ticker-shift {
+  from { transform: translateX(0); }
+  to { transform: translateX(-64ch); }  /* Shift by full pattern (64 chars) */
+}
+
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
   *,

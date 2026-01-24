@@ -66,6 +66,25 @@ a:hover {
   animation: flow 2s ease-in-out infinite;
 }
 
+/* Header scroll animation */
+@keyframes scroll {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-16ch); } /* One pattern segment = 16 chars */
+}
+
+@keyframes scroll-reverse {
+  0% { transform: translateX(-16ch); }
+  100% { transform: translateX(0); }
+}
+
+.animate-scroll {
+  animation: scroll 3.2s linear infinite; /* 400ms * 8 chars visible = 3.2s feel */
+}
+
+.animate-scroll-reverse {
+  animation: scroll-reverse 3.2s linear infinite;
+}
+
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
   *,
