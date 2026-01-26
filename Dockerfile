@@ -25,8 +25,8 @@ RUN npm install
 RUN mkdir -p /app/target/site/pkg
 RUN npx @tailwindcss/cli --input style/tailwind.css --output /app/target/site/pkg/bp-web.css --minify
 
-# Copy static assets from public folder
-RUN cp -r public/* /app/target/site/ 2>/dev/null || true
+# Copy static assets from public folder (fail fast if missing)
+RUN cp -r public/* /app/target/site/
 
 # Build the Rust binary
 WORKDIR /app
