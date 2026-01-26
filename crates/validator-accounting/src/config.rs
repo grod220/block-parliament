@@ -20,6 +20,36 @@ pub struct FileConfig {
     pub api_keys: ApiKeys,
     #[serde(default)]
     pub notion: Option<NotionConfig>,
+    #[serde(default)]
+    pub bam: Option<BamConfig>,
+}
+
+/// Jito BAM (Block Assembly Marketplace) configuration
+#[derive(Debug, Clone, Deserialize)]
+pub struct BamConfig {
+    /// Enable BAM reward tracking (default: true if section present)
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// First epoch to check for BAM rewards (default: 912)
+    #[serde(default = "default_bam_first_epoch")]
+    pub first_epoch: u64,
+    /// jitoSOL to SOL exchange rate for valuation (default: 1.0)
+    /// jitoSOL typically trades at ~1.05-1.15x SOL. Set to 1.0 for conservative
+    /// accounting, or a realistic value like 1.10 for more accurate reporting.
+    #[serde(default = "default_jitosol_rate")]
+    pub jitosol_rate: f64,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_bam_first_epoch() -> u64 {
+    crate::constants::BAM_FIRST_EPOCH
+}
+
+fn default_jitosol_rate() -> f64 {
+    1.0 // Conservative default
 }
 
 /// Validator-specific configuration
@@ -105,12 +135,24 @@ pub struct Config {
     pub sfdp_acceptance_date: Option<String>,
     /// Bootstrap date (for finding initial seeding)
     pub bootstrap_date: String,
+    /// BAM reward tracking enabled
+    pub bam_enabled: bool,
+    /// First epoch to check for BAM rewards
+    pub bam_first_epoch: u64,
+    /// jitoSOL to SOL exchange rate for BAM reward valuation
+    pub bam_jitosol_rate: f64,
 }
 
 impl Config {
     /// Create config from file config and optional RPC URL override
     pub fn from_file(file_config: &FileConfig, rpc_url: Option<String>) -> Result<Self> {
         let validator = &file_config.validator;
+
+        // BAM config defaults
+        let (bam_enabled, bam_first_epoch, bam_jitosol_rate) = match &file_config.bam {
+            Some(bam) => (bam.enabled, bam.first_epoch, bam.jitosol_rate),
+            None => (true, constants::BAM_FIRST_EPOCH, 1.0), // Enabled by default, conservative rate
+        };
 
         Ok(Self {
             // Parse validator addresses from config
@@ -142,6 +184,11 @@ impl Config {
 
             // Bootstrap date (when validator was first set up)
             bootstrap_date: validator.bootstrap_date.clone(),
+
+            // BAM reward tracking
+            bam_enabled,
+            bam_first_epoch,
+            bam_jitosol_rate,
         })
     }
 
@@ -211,6 +258,9 @@ mod tests {
             first_reward_epoch: 900,
             sfdp_acceptance_date: sfdp_date.map(|s| s.to_string()),
             bootstrap_date: "2025-11-01".to_string(),
+            bam_enabled: true,
+            bam_first_epoch: 912,
+            bam_jitosol_rate: 1.0,
         }
     }
 

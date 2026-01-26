@@ -4,6 +4,7 @@
 //! on-chain data and labeling known addresses.
 
 mod addresses;
+mod bam;
 mod cache;
 mod config;
 mod constants;
@@ -1071,6 +1072,32 @@ async fn run_report_generation(args: Args, cache: Cache) -> Result<()> {
         total_mev
     );
 
+    // Step 4.5: Fetch BAM claims (jitoSOL rewards, with caching)
+    let bam_claims = if config.bam_enabled {
+        println!("Fetching BAM rewards (jitoSOL)...");
+        fetch_bam_with_cache(&cache, &config, start_epoch, end_epoch, current_epoch, args.no_cache)
+            .await
+            .unwrap_or_else(|e| {
+                eprintln!("  Warning: Failed to fetch BAM claims: {}", e);
+                Vec::new()
+            })
+    } else {
+        Vec::new()
+    };
+
+    if !bam_claims.is_empty() {
+        let total_bam_jitosol = bam::total_bam_jitosol(&bam_claims);
+        let total_bam_sol = bam::total_bam_sol_equivalent(&bam_claims);
+        println!(
+            "  Found {} BAM claims: {:.4} jitoSOL (~{:.4} SOL)\n",
+            bam_claims.len(),
+            total_bam_jitosol,
+            total_bam_sol
+        );
+    } else if config.bam_enabled {
+        println!("  No BAM claims found\n");
+    }
+
     // Step 5: Fetch leader slot fees (with caching - this is the slow one!)
     println!("Fetching leader slot fees...");
     let leader_fees = fetch_leader_fees_with_cache(
@@ -1210,6 +1237,7 @@ async fn run_report_generation(args: Args, cache: Cache) -> Result<()> {
         rewards: &rewards,
         categorized: &categorized,
         mev_claims: &mev_claims,
+        bam_claims: &bam_claims,
         leader_fees: &leader_fees,
         vote_costs: &vote_costs,
         expenses: &all_expenses,
@@ -1409,6 +1437,93 @@ async fn fetch_mev_with_cache(
             .collect();
     } else {
         println!("    ({} epochs from cache)", cached_count);
+    }
+
+    // Sort by epoch
+    claims.sort_by_key(|c| c.epoch);
+
+    Ok(claims)
+}
+
+/// Fetch BAM claims with caching
+///
+/// BAM (Block Assembly Marketplace) rewards are jitoSOL tokens distributed
+/// per JIP-31. They start at epoch 912 and are claimed to the validator's
+/// identity's associated token account.
+async fn fetch_bam_with_cache(
+    cache: &Cache,
+    config: &config::Config,
+    start_epoch: u64,
+    end_epoch: u64,
+    current_epoch: u64,
+    no_cache: bool,
+) -> Result<Vec<bam::BamClaim>> {
+    // Respect config's first epoch setting
+    let effective_start = start_epoch.max(config.bam_first_epoch);
+
+    if effective_start > end_epoch {
+        return Ok(Vec::new());
+    }
+
+    if no_cache {
+        let claims = bam::fetch_bam_claims(config, effective_start, end_epoch).await?;
+        cache.store_bam_claims(&claims).await?;
+        return Ok(claims);
+    }
+
+    // BAM claims only exist for completed epochs
+    let completed_end = end_epoch.min(current_epoch.saturating_sub(1));
+
+    // Get cached claims for completed epochs
+    let mut claims = cache.get_bam_claims(effective_start, completed_end).await?;
+    let cached_count = claims.len();
+
+    // Check which epochs we have cached
+    let cached_epochs = cache.get_cached_bam_epochs(effective_start, completed_end).await?;
+
+    // Find epochs that need fetching (not in cache)
+    // Note: Unlike MEV where sparse data is expected, BAM rewards may be sparse too
+    // (validators only get rewards when running BAM)
+    let missing_epochs: Vec<u64> = (effective_start..=completed_end)
+        .filter(|e| !cached_epochs.contains(e))
+        .collect();
+
+    if !missing_epochs.is_empty() {
+        // Only fetch the missing range
+        let fetch_start = *missing_epochs.iter().min().unwrap();
+        let fetch_end = *missing_epochs.iter().max().unwrap();
+
+        println!(
+            "    Fetching BAM data for epochs {}-{} ({} missing)...",
+            fetch_start,
+            fetch_end,
+            missing_epochs.len()
+        );
+
+        match bam::fetch_bam_claims(config, fetch_start, fetch_end).await {
+            Ok(fresh_claims) => {
+                // Store in cache (uses INSERT OR IGNORE, so idempotent)
+                if !fresh_claims.is_empty() {
+                    cache.store_bam_claims(&fresh_claims).await?;
+                    println!("    Cached {} BAM claims", fresh_claims.len());
+
+                    // Merge with existing claims (collect signatures first to avoid borrow conflict)
+                    let existing_sigs: std::collections::HashSet<String> =
+                        claims.iter().map(|c| c.tx_signature.clone()).collect();
+                    for claim in fresh_claims {
+                        if !existing_sigs.contains(&claim.tx_signature) {
+                            claims.push(claim);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("    Warning: Failed to fetch BAM claims: {}", e);
+                // Continue with cached data
+            }
+        }
+    } else if cached_count > 0 {
+        println!("    ({} claims from cache)", cached_count);
     }
 
     // Sort by epoch

@@ -49,6 +49,29 @@ coingecko = "your-coingecko-api-key-here"
 dune = "your-dune-api-key-here"
 
 # =============================================================================
+# BAM (Block Assembly Marketplace) Configuration
+# =============================================================================
+[bam]
+# Enable BAM reward tracking (requires validator to be running BAM)
+# Default: true
+enabled = true
+
+# First epoch to check for BAM rewards
+# Default: 912 (when BAM rewards became available)
+first_epoch = 912
+
+# jitoSOL to SOL exchange rate for valuation
+# jitoSOL typically trades at ~1.05-1.15x SOL due to accumulated staking rewards.
+# Default: 1.0 (conservative for accounting)
+# Set to a realistic value like 1.10 for more accurate revenue reporting.
+jitosol_rate = 1.0
+
+# Note: BAM rewards are jitoSOL tokens claimed to the validator identity's
+# associated token account. The identity pubkey from [validator] section is used
+# for API queries. Make sure it's the IDENTITY pubkey, not the vote account.
+# Only actually claimed rewards are recorded (unclaimed eligibility is skipped).
+
+# =============================================================================
 # Optional Integrations
 # =============================================================================
 [notion]

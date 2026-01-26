@@ -13,6 +13,10 @@ pub const HELIUS_RPC_BASE: &str = "https://mainnet.helius-rpc.com/?api-key=";
 /// Jito MEV API base URL
 pub const JITO_API_BASE: &str = "https://kobe.mainnet.jito.network/api/v1";
 
+/// Jito BAM Boost API base URL (for claim history)
+/// Query format: {base}/{epoch}/{validator_identity}
+pub const JITO_BAM_API_BASE: &str = "https://kobe.mainnet.jito.network/api/v1/claim/mainnet";
+
 /// CoinGecko API base URL
 pub const COINGECKO_API_BASE: &str = "https://api.coingecko.com/api/v3";
 
@@ -53,6 +57,17 @@ pub const REFERENCE_EPOCH_TIMESTAMP: i64 = 1765843200;
 
 /// SFDP vote cost reimbursement address (Solana Foundation)
 pub const SFDP_REIMBURSEMENT: &str = "DtZWL3BPKa5hw7yQYvaFR29PcXThpLHVU2XAAZrcLiSe";
+
+/// jitoSOL mint address (SPL token)
+#[allow(dead_code)]
+pub const JITOSOL_MINT: &str = "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn";
+
+/// Jito BAM Boost program ID (JIP-31)
+#[allow(dead_code)]
+pub const BAM_BOOST_PROGRAM: &str = "BoostxbPp2ENYHGcTLYt1obpcY13HE4NojdqNWdzqSSb";
+
+/// First epoch with BAM rewards available (Block Assembly Marketplace started ~epoch 912)
+pub const BAM_FIRST_EPOCH: u64 = 912;
 
 // =============================================================================
 // File Names

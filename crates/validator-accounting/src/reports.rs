@@ -5,6 +5,7 @@ use csv::Writer;
 use std::collections::HashMap;
 use std::path::Path;
 
+use crate::bam::BamClaim;
 use crate::config::Config;
 use crate::constants;
 use crate::expenses::{Expense, ExpenseCategory};
@@ -19,6 +20,7 @@ pub struct ReportData<'a> {
     pub rewards: &'a [EpochReward],
     pub categorized: &'a CategorizedTransfers,
     pub mev_claims: &'a [MevClaim],
+    pub bam_claims: &'a [BamClaim],
     pub leader_fees: &'a [EpochLeaderFees],
     pub vote_costs: &'a [EpochVoteCost],
     pub expenses: &'a [Expense],
@@ -33,6 +35,7 @@ pub fn generate_all_reports(output_dir: &Path, data: &ReportData, year_filter: O
         data.rewards,
         data.categorized,
         data.mev_claims,
+        data.bam_claims,
         data.leader_fees,
         data.prices,
     )?;
@@ -49,6 +52,7 @@ fn generate_income_ledger(
     rewards: &[EpochReward],
     categorized: &CategorizedTransfers,
     mev_claims: &[MevClaim],
+    bam_claims: &[BamClaim],
     leader_fees: &[EpochLeaderFees],
     prices: &PriceCache,
 ) -> Result<()> {
@@ -170,6 +174,32 @@ fn generate_income_ledger(
             &format!(
                 "{} blocks produced, {} skipped",
                 fees.blocks_produced, fees.skipped_slots
+            ),
+        ])?;
+    }
+
+    // BAM claims (jitoSOL rewards per JIP-31)
+    for claim in bam_claims {
+        let date = claim.date.as_deref().unwrap_or("unknown");
+        let price = get_price(prices, date);
+        // Use the SOL-equivalent value for USD calculation
+        let usd_value = claim.amount_sol_equivalent * price;
+        let jitosol_amount = claim.amount_jitosol_lamports as f64 / 1e9;
+
+        wtr.write_record([
+            date,
+            &claim.epoch.to_string(),
+            "BAM Rewards",
+            "Jito BAM Boost",
+            "Identity Token Account",
+            &format!("{:.6}", claim.amount_sol_equivalent),
+            &format!("{:.2}", price),
+            &format!("{:.2}", usd_value),
+            &claim.tx_signature[..claim.tx_signature.len().min(16)],
+            &format!(
+                "{:.6} jitoSOL (rate: {:.4})",
+                jitosol_amount,
+                claim.jitosol_sol_rate.unwrap_or(1.0)
             ),
         ])?;
     }
@@ -418,6 +448,17 @@ fn generate_summary(output_dir: &Path, data: &ReportData, year_filter: Option<i3
         }
     }
 
+    // BAM rewards (jitoSOL, tracked in SOL equivalent)
+    for claim in data.bam_claims {
+        if let Some(date) = &claim.date {
+            let month = &date[..7];
+            let price = get_price(data.prices, date);
+            let entry = monthly.entry(month.to_string()).or_default();
+            entry.bam_sol += claim.amount_sol_equivalent;
+            entry.bam_usd += claim.amount_sol_equivalent * price;
+        }
+    }
+
     // Leader fees from block production
     for fees in data.leader_fees {
         if let Some(date) = &fees.date {
@@ -467,6 +508,8 @@ fn generate_summary(output_dir: &Path, data: &ReportData, year_filter: Option<i3
         "Leader_Fees_USD",
         "MEV_SOL",
         "MEV_USD",
+        "BAM_SOL",
+        "BAM_USD",
         "Total_Revenue_USD",
         "Vote_Costs_SOL",
         "Vote_Costs_Gross_USD",
@@ -497,8 +540,8 @@ fn generate_summary(output_dir: &Path, data: &ReportData, year_filter: Option<i3
     for month in &months {
         let year = &month[..4];
         let data = &monthly[month];
-        // SFDP is expense offset, not revenue
-        let total_revenue = data.commission_usd + data.leader_fees_usd + data.mev_usd;
+        // SFDP is expense offset, not revenue. BAM rewards are revenue.
+        let total_revenue = data.commission_usd + data.leader_fees_usd + data.mev_usd + data.bam_usd;
         let total_expenses = data.vote_costs_net_usd + data.other_expenses_usd;
         let net_profit = total_revenue - total_expenses;
 
@@ -517,6 +560,8 @@ fn generate_summary(output_dir: &Path, data: &ReportData, year_filter: Option<i3
         annual.leader_fees_usd += data.leader_fees_usd;
         annual.mev_sol += data.mev_sol;
         annual.mev_usd += data.mev_usd;
+        annual.bam_sol += data.bam_sol;
+        annual.bam_usd += data.bam_usd;
         annual.sfdp_sol += data.sfdp_sol;
         annual.sfdp_usd += data.sfdp_usd;
         annual.vote_costs_sol += data.vote_costs_sol;
@@ -533,6 +578,8 @@ fn generate_summary(output_dir: &Path, data: &ReportData, year_filter: Option<i3
             &format!("{:.2}", data.leader_fees_usd),
             &format!("{:.4}", data.mev_sol),
             &format!("{:.2}", data.mev_usd),
+            &format!("{:.4}", data.bam_sol),
+            &format!("{:.2}", data.bam_usd),
             &format!("{:.2}", total_revenue),
             &format!("{:.4}", data.vote_costs_sol),
             &format!("{:.2}", data.vote_costs_gross_usd),
@@ -551,8 +598,8 @@ fn generate_summary(output_dir: &Path, data: &ReportData, year_filter: Option<i3
 
     for year in &years {
         let data = &annual_totals[year];
-        // SFDP is expense offset, not revenue
-        let total_revenue = data.commission_usd + data.leader_fees_usd + data.mev_usd;
+        // SFDP is expense offset, not revenue. BAM rewards are revenue.
+        let total_revenue = data.commission_usd + data.leader_fees_usd + data.mev_usd + data.bam_usd;
         let total_expenses = data.vote_costs_net_usd + data.other_expenses_usd;
         let net_profit = total_revenue - total_expenses;
 
@@ -565,6 +612,8 @@ fn generate_summary(output_dir: &Path, data: &ReportData, year_filter: Option<i3
             &format!("{:.2}", data.leader_fees_usd),
             &format!("{:.4}", data.mev_sol),
             &format!("{:.2}", data.mev_usd),
+            &format!("{:.4}", data.bam_sol),
+            &format!("{:.2}", data.bam_usd),
             &format!("{:.2}", total_revenue),
             &format!("{:.4}", data.vote_costs_sol),
             &format!("{:.2}", data.vote_costs_gross_usd),
@@ -591,6 +640,8 @@ struct MonthlyData {
     leader_fees_usd: f64,
     mev_sol: f64,
     mev_usd: f64,
+    bam_sol: f64,
+    bam_usd: f64,
     sfdp_sol: f64,
     sfdp_usd: f64,
     vote_costs_sol: f64,
@@ -682,6 +733,23 @@ pub fn print_summary(data: &ReportData, year_filter: Option<i32>) {
         (mev_sol, mev_usd)
     };
 
+    // BAM rewards (jitoSOL converted to SOL equivalent)
+    let total_bam_sol: f64 = data
+        .bam_claims
+        .iter()
+        .filter(|c| c.date.as_deref().map(&matches_year).unwrap_or(false))
+        .map(|c| c.amount_sol_equivalent)
+        .sum();
+    let total_bam_usd: f64 = data
+        .bam_claims
+        .iter()
+        .filter(|c| c.date.as_deref().map(&matches_year).unwrap_or(false))
+        .map(|c| {
+            let price = get_price(data.prices, c.date.as_deref().unwrap_or(constants::FALLBACK_DATE));
+            c.amount_sol_equivalent * price
+        })
+        .sum();
+
     // Leader fees from block production
     let total_leader_fees_sol: f64 = data
         .leader_fees
@@ -757,8 +825,8 @@ pub fn print_summary(data: &ReportData, year_filter: Option<i32>) {
         .map(|e| e.amount_usd)
         .sum();
 
-    // SFDP is an expense offset, not revenue
-    let total_revenue_usd = total_commission_usd + total_leader_fees_usd + total_mev_usd;
+    // SFDP is an expense offset, not revenue. BAM rewards are revenue.
+    let total_revenue_usd = total_commission_usd + total_leader_fees_usd + total_mev_usd + total_bam_usd;
     let total_expenses_usd = total_vote_costs_net_usd + total_other_expenses;
     let net_profit = total_revenue_usd - total_expenses_usd;
 
@@ -769,6 +837,8 @@ pub fn print_summary(data: &ReportData, year_filter: Option<i32>) {
     let total_leader_fees_usd = normalize_zero(total_leader_fees_usd);
     let total_mev_sol = normalize_zero(total_mev_sol);
     let total_mev_usd = normalize_zero(total_mev_usd);
+    let total_bam_sol = normalize_zero(total_bam_sol);
+    let total_bam_usd = normalize_zero(total_bam_usd);
     let total_seeding_sol = normalize_zero(total_seeding_sol);
 
     println!("REVENUE:");
@@ -784,10 +854,16 @@ pub fn print_summary(data: &ReportData, year_filter: Option<i32>) {
         "  Jito MEV:           {:>10.4} SOL  ${:>10.2}",
         total_mev_sol, total_mev_usd
     );
+    if total_bam_sol > 0.0 || !data.bam_claims.is_empty() {
+        println!(
+            "  BAM Rewards:        {:>10.4} SOL  ${:>10.2}",
+            total_bam_sol, total_bam_usd
+        );
+    }
     println!("  ─────────────────────────────────────────────");
     println!(
         "  Total Revenue:      {:>10.4} SOL  ${:>10.2}",
-        total_commission_sol + total_leader_fees_sol + total_mev_sol,
+        total_commission_sol + total_leader_fees_sol + total_mev_sol + total_bam_sol,
         total_revenue_usd
     );
 

@@ -17,6 +17,8 @@ pub enum AddressCategory {
     SolanaFoundation,
     /// Jito tip distribution / MEV-related
     JitoMev,
+    /// Jito BAM Boost program (jitoSOL rewards per JIP-31)
+    BamRewards,
     /// Known exchange (Coinbase, Binance, etc.)
     Exchange,
     /// Block Parliament validator account (vote, identity)
@@ -179,6 +181,26 @@ pub static KNOWN_ADDRESSES: LazyLock<HashMap<Pubkey, AddressLabel>> = LazyLock::
         AddressCategory::JitoMev,
         "Jito Tip Account 8",
         None,
+    );
+
+    // =========================================================================
+    // Jito BAM Boost (JIP-31 - jitoSOL rewards for validators)
+    // =========================================================================
+
+    add_address(
+        &mut map,
+        "BoostxbPp2ENYHGcTLYt1obpcY13HE4NojdqNWdzqSSb",
+        AddressCategory::BamRewards,
+        "Jito BAM Boost Program",
+        Some("JIP-31 Block Assembly Marketplace program"),
+    );
+
+    add_address(
+        &mut map,
+        "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn",
+        AddressCategory::BamRewards,
+        "jitoSOL Mint",
+        Some("jitoSOL SPL token mint"),
     );
 
     // =========================================================================

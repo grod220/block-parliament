@@ -9,6 +9,7 @@ use sqlx::{FromRow, SqlitePool};
 use std::path::Path;
 
 use crate::addresses::AddressCategory;
+use crate::bam::BamClaim;
 use crate::expenses::{Expense, ExpenseCategory, RecurringExpense};
 use crate::jito::MevClaim;
 use crate::leader_fees::EpochLeaderFees;
@@ -65,6 +66,18 @@ struct VoteCostRow {
     total_fee_sol: f64,
     source: String,
     date: Option<String>,
+}
+
+/// Row type for BAM claims query
+#[derive(FromRow)]
+struct BamClaimRow {
+    tx_signature: String,
+    epoch: i64,
+    amount_jitosol_lamports: i64,
+    amount_sol_equivalent: f64,
+    jitosol_sol_rate: Option<f64>,
+    claimed_at: Option<String>,
+    date: String,
 }
 
 /// Row type for expenses query
@@ -191,6 +204,30 @@ impl Cache {
         )
         .execute(&self.pool)
         .await?;
+
+        sqlx::query(
+            "
+            -- Jito BAM claims (jitoSOL rewards per JIP-31)
+            -- Uses tx_signature as primary key for idempotent inserts
+            CREATE TABLE IF NOT EXISTS bam_claims (
+                tx_signature TEXT PRIMARY KEY,
+                epoch INTEGER NOT NULL,
+                amount_jitosol_lamports INTEGER NOT NULL,
+                amount_sol_equivalent REAL NOT NULL,
+                jitosol_sol_rate REAL,
+                claimed_at TEXT,
+                date TEXT NOT NULL,
+                fetched_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            ",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Index for quick lookups by epoch
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_bam_claims_epoch ON bam_claims(epoch)")
+            .execute(&self.pool)
+            .await?;
 
         sqlx::query(
             "
@@ -515,6 +552,82 @@ impl Cache {
             .bind(claim.commission_lamports as i64)
             .bind(claim.amount_sol)
             .bind(&claim.date)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
+        Ok(())
+    }
+
+    // =========================================================================
+    // BAM Claims (jitoSOL rewards)
+    // =========================================================================
+
+    /// Get cached BAM claims for an epoch range
+    pub async fn get_bam_claims(&self, start_epoch: u64, end_epoch: u64) -> Result<Vec<BamClaim>> {
+        let rows: Vec<BamClaimRow> = sqlx::query_as(
+            "SELECT tx_signature, epoch, amount_jitosol_lamports, amount_sol_equivalent,
+                    jitosol_sol_rate, claimed_at, date
+             FROM bam_claims
+             WHERE epoch >= ? AND epoch <= ?
+             ORDER BY epoch",
+        )
+        .bind(start_epoch as i64)
+        .bind(end_epoch as i64)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| BamClaim {
+                epoch: r.epoch as u64,
+                amount_jitosol_lamports: r.amount_jitosol_lamports as u64,
+                amount_sol_equivalent: r.amount_sol_equivalent,
+                jitosol_sol_rate: r.jitosol_sol_rate,
+                claimed_at: r.claimed_at,
+                tx_signature: r.tx_signature,
+                date: Some(r.date),
+            })
+            .collect())
+    }
+
+    /// Get epochs that have BAM claims cached
+    pub async fn get_cached_bam_epochs(&self, start_epoch: u64, end_epoch: u64) -> Result<Vec<u64>> {
+        let rows: Vec<(i64,)> = sqlx::query_as("SELECT DISTINCT epoch FROM bam_claims WHERE epoch >= ? AND epoch <= ?")
+            .bind(start_epoch as i64)
+            .bind(end_epoch as i64)
+            .fetch_all(&self.pool)
+            .await?;
+
+        Ok(rows.into_iter().map(|(e,)| e as u64).collect())
+    }
+
+    /// Store BAM claims (uses INSERT OR REPLACE to allow updates on re-fetch)
+    ///
+    /// Matches the pattern used by other epoch-based tables (epoch_rewards, mev_claims, etc.)
+    /// so that re-running reports can update cached data if needed.
+    pub async fn store_bam_claims(&self, claims: &[BamClaim]) -> Result<()> {
+        if claims.is_empty() {
+            return Ok(());
+        }
+
+        let mut tx = self.pool.begin().await?;
+
+        for claim in claims {
+            sqlx::query(
+                "INSERT OR REPLACE INTO bam_claims
+                 (tx_signature, epoch, amount_jitosol_lamports, amount_sol_equivalent,
+                  jitosol_sol_rate, claimed_at, date)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(&claim.tx_signature)
+            .bind(claim.epoch as i64)
+            .bind(claim.amount_jitosol_lamports as i64)
+            .bind(claim.amount_sol_equivalent)
+            .bind(claim.jitosol_sol_rate)
+            .bind(&claim.claimed_at)
+            .bind(claim.date.as_deref().unwrap_or("unknown"))
             .execute(&mut *tx)
             .await?;
         }
@@ -925,6 +1038,10 @@ impl Cache {
         let mev_claims: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM mev_claims")
             .fetch_one(&self.pool)
             .await?;
+        let bam_claims: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM bam_claims")
+            .fetch_one(&self.pool)
+            .await
+            .unwrap_or((0,));
         let vote_costs: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM vote_costs")
             .fetch_one(&self.pool)
             .await?;
@@ -947,6 +1064,7 @@ impl Cache {
             epoch_rewards: epoch_rewards.0 as u64,
             leader_fees: leader_fees.0 as u64,
             mev_claims: mev_claims.0 as u64,
+            bam_claims: bam_claims.0 as u64,
             vote_costs: vote_costs.0 as u64,
             prices: prices.0 as u64,
             expenses: expenses.0 as u64,
@@ -986,6 +1104,7 @@ fn category_to_string(cat: &AddressCategory) -> &'static str {
     match cat {
         AddressCategory::SolanaFoundation => "SolanaFoundation",
         AddressCategory::JitoMev => "JitoMev",
+        AddressCategory::BamRewards => "BamRewards",
         AddressCategory::Exchange => "Exchange",
         AddressCategory::ValidatorSelf => "ValidatorSelf",
         AddressCategory::PersonalWallet => "PersonalWallet",
@@ -1001,6 +1120,7 @@ fn string_to_category(s: &str) -> AddressCategory {
     match s {
         "SolanaFoundation" => AddressCategory::SolanaFoundation,
         "JitoMev" => AddressCategory::JitoMev,
+        "BamRewards" => AddressCategory::BamRewards,
         "Exchange" => AddressCategory::Exchange,
         "ValidatorSelf" => AddressCategory::ValidatorSelf,
         "PersonalWallet" => AddressCategory::PersonalWallet,
@@ -1017,6 +1137,7 @@ pub struct CacheStats {
     pub epoch_rewards: u64,
     pub leader_fees: u64,
     pub mev_claims: u64,
+    pub bam_claims: u64,
     pub vote_costs: u64,
     pub prices: u64,
     pub expenses: u64,
@@ -1028,10 +1149,11 @@ impl std::fmt::Display for CacheStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} rewards, {} leader fees, {} MEV claims, {} vote costs, {} transfers, {} prices, {} expenses, {} recurring",
+            "{} rewards, {} leader fees, {} MEV claims, {} BAM claims, {} vote costs, {} transfers, {} prices, {} expenses, {} recurring",
             self.epoch_rewards,
             self.leader_fees,
             self.mev_claims,
+            self.bam_claims,
             self.vote_costs,
             self.transfers,
             self.prices,
