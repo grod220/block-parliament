@@ -13,6 +13,7 @@ use crate::bam::BamClaim;
 use crate::expenses::{Expense, ExpenseCategory, RecurringExpense};
 use crate::jito::MevClaim;
 use crate::leader_fees::EpochLeaderFees;
+use crate::positions::{StakeAccountInfo, ValidatorPosition};
 use crate::prices::PriceCache;
 use crate::transactions::{EpochReward, SolTransfer};
 use crate::vote_costs::EpochVoteCost;
@@ -351,6 +352,71 @@ impl Cache {
         )
         .execute(&self.pool)
         .await?;
+
+        // =====================================================================
+        // Position Tracking Tables
+        // =====================================================================
+
+        sqlx::query(
+            "
+            -- Stake accounts owned by the validator (self-stake)
+            CREATE TABLE IF NOT EXISTS stake_accounts (
+                account TEXT PRIMARY KEY,
+                balance_lamports INTEGER NOT NULL,
+                state TEXT NOT NULL,
+                voter TEXT,
+                lockup_epoch INTEGER,
+                is_liquid INTEGER NOT NULL DEFAULT 0,
+                snapshot_slot INTEGER NOT NULL,
+                fetched_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            ",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_stake_state ON stake_accounts(state, is_liquid)")
+            .execute(&self.pool)
+            .await?;
+
+        sqlx::query(
+            "
+            -- Historical balance snapshots (daily/per-epoch)
+            -- All amounts in lamports for precision
+            CREATE TABLE IF NOT EXISTS balance_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,
+                epoch INTEGER NOT NULL,
+                snapshot_slot INTEGER NOT NULL,
+                vote_account_lamports INTEGER NOT NULL,
+                identity_lamports INTEGER NOT NULL,
+                withdraw_authority_lamports INTEGER NOT NULL,
+                stake_liquid_lamports INTEGER NOT NULL DEFAULT 0,
+                stake_locked_lamports INTEGER NOT NULL DEFAULT 0,
+                jitosol_lamports INTEGER DEFAULT 0,
+                jitosol_rate REAL,
+                total_lamports INTEGER NOT NULL,
+                cumulative_income_lamports INTEGER NOT NULL,
+                cumulative_expenses_lamports INTEGER NOT NULL DEFAULT 0,
+                cumulative_withdrawals_lamports INTEGER NOT NULL,
+                cumulative_deposits_lamports INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(date, snapshot_slot)
+            )
+            ",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Index for withdrawal tracking
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_transfers_withdrawal
+             ON sol_transfers(to_category)
+             WHERE to_category IN ('Exchange', 'PersonalWallet')",
+        )
+        .execute(&self.pool)
+        .await
+        .ok(); // Ignore error if partial index not supported
 
         Ok(())
     }
@@ -1024,6 +1090,258 @@ impl Cache {
     }
 
     // =========================================================================
+    // Position Tracking
+    // =========================================================================
+
+    /// Store stake accounts
+    /// Uses a single transaction for DELETE + INSERT to prevent data loss on failure
+    pub async fn store_stake_accounts(&self, stakes: &[StakeAccountInfo]) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+
+        // Clear old stake accounts first (inside transaction)
+        sqlx::query("DELETE FROM stake_accounts").execute(&mut *tx).await?;
+
+        // Insert new stake accounts
+        for s in stakes {
+            sqlx::query(
+                "INSERT INTO stake_accounts
+                 (account, balance_lamports, state, voter, lockup_epoch, is_liquid, snapshot_slot)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(s.account.to_string())
+            .bind(s.balance_lamports as i64)
+            .bind(s.state.to_string())
+            .bind(s.voter.map(|v| v.to_string()))
+            .bind(s.lockup_epoch.map(|e| e as i64))
+            .bind(if s.is_liquid { 1i64 } else { 0i64 })
+            .bind(s.snapshot_slot as i64)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Store a historical balance snapshot
+    pub async fn store_balance_snapshot(&self, position: &ValidatorPosition, date: &str, epoch: u64) -> Result<()> {
+        sqlx::query(
+            "INSERT OR REPLACE INTO balance_history
+             (date, epoch, snapshot_slot, vote_account_lamports, identity_lamports,
+              withdraw_authority_lamports, stake_liquid_lamports, stake_locked_lamports,
+              jitosol_lamports, jitosol_rate, total_lamports, cumulative_income_lamports,
+              cumulative_expenses_lamports, cumulative_withdrawals_lamports,
+              cumulative_deposits_lamports)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(date)
+        .bind(epoch as i64)
+        .bind(position.snapshot_slot as i64)
+        .bind(position.vote_account_lamports as i64)
+        .bind(position.identity_lamports as i64)
+        .bind(position.withdraw_authority_lamports as i64)
+        .bind(position.stake_accounts_liquid as i64)
+        .bind(position.stake_accounts_locked as i64)
+        .bind(position.jitosol_lamports as i64)
+        .bind(position.jitosol_sol_rate)
+        .bind(position.total_assets_lamports as i64)
+        .bind(position.lifetime_income_lamports as i64)
+        .bind(position.lifetime_expenses_lamports as i64)
+        .bind(position.lifetime_withdrawals_lamports as i64)
+        .bind(position.lifetime_deposits_lamports as i64)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    // =========================================================================
+    // Income/Expense Aggregation for Reconciliation
+    // =========================================================================
+
+    /// Get total lifetime income in lamports
+    /// Includes: staking rewards, leader fees, MEV tips, BAM rewards
+    pub async fn get_total_income_lamports(&self) -> Result<u64> {
+        // Staking commission rewards
+        let rewards: (Option<i64>,) = sqlx::query_as("SELECT SUM(amount_lamports) FROM epoch_rewards")
+            .fetch_one(&self.pool)
+            .await?;
+        let rewards_lamports = rewards.0.unwrap_or(0).max(0) as u64;
+
+        // Leader slot fees
+        let leader: (Option<i64>,) = sqlx::query_as("SELECT SUM(total_fees_lamports) FROM leader_fees")
+            .fetch_one(&self.pool)
+            .await?;
+        let leader_lamports = leader.0.unwrap_or(0).max(0) as u64;
+
+        // Jito MEV commission
+        let mev: (Option<i64>,) = sqlx::query_as("SELECT SUM(commission_lamports) FROM mev_claims")
+            .fetch_one(&self.pool)
+            .await?;
+        let mev_lamports = mev.0.unwrap_or(0).max(0) as u64;
+
+        // BAM rewards (jitoSOL converted to SOL equivalent at claim time)
+        // BAM is in jitoSOL, so we use the SOL equivalent stored at claim time
+        let bam: (Option<f64>,) = sqlx::query_as("SELECT SUM(amount_sol_equivalent) FROM bam_claims")
+            .fetch_one(&self.pool)
+            .await
+            .unwrap_or((None,));
+        let bam_lamports = ((bam.0.unwrap_or(0.0) * 1_000_000_000.0) as i64).max(0) as u64;
+
+        Ok(rewards_lamports
+            .saturating_add(leader_lamports)
+            .saturating_add(mev_lamports)
+            .saturating_add(bam_lamports))
+    }
+
+    /// Get total lifetime expenses in lamports
+    /// Includes: vote transaction costs
+    /// Note: USD expenses are not included (would need price conversion)
+    pub async fn get_total_expenses_lamports(&self) -> Result<u64> {
+        // Vote transaction costs
+        let vote_costs: (Option<i64>,) = sqlx::query_as("SELECT SUM(total_fee_lamports) FROM vote_costs")
+            .fetch_one(&self.pool)
+            .await?;
+
+        Ok(vote_costs.0.unwrap_or(0).max(0) as u64)
+    }
+
+    /// Get total lifetime withdrawals in lamports
+    /// Includes: transfers to exchanges or personal wallets
+    pub async fn get_total_withdrawals_lamports(&self) -> Result<u64> {
+        let withdrawals: (Option<i64>,) = sqlx::query_as(
+            "SELECT SUM(amount_lamports) FROM sol_transfers
+             WHERE to_category IN ('Exchange', 'PersonalWallet')",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or((None,));
+
+        Ok(withdrawals.0.unwrap_or(0).max(0) as u64)
+    }
+
+    /// Get total lifetime deposits in lamports
+    /// Includes: transfers from personal wallet to validator accounts (seeding)
+    pub async fn get_total_deposits_lamports(&self) -> Result<u64> {
+        let deposits: (Option<i64>,) = sqlx::query_as(
+            "SELECT SUM(amount_lamports) FROM sol_transfers
+             WHERE from_category = 'PersonalWallet'
+             AND to_category = 'ValidatorSelf'",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or((None,));
+
+        Ok(deposits.0.unwrap_or(0).max(0) as u64)
+    }
+
+    /// Get all income/expense data for reconciliation
+    pub async fn get_reconciliation_data(&self) -> Result<crate::positions::IncomeData> {
+        let total_income = self.get_total_income_lamports().await?;
+        let total_expenses = self.get_total_expenses_lamports().await?;
+        let total_withdrawals = self.get_total_withdrawals_lamports().await?;
+        let total_deposits = self.get_total_deposits_lamports().await?;
+
+        Ok(crate::positions::IncomeData {
+            total_income_lamports: total_income,
+            total_expenses_lamports: total_expenses,
+            total_withdrawals_lamports: total_withdrawals,
+            total_deposits_lamports: total_deposits,
+        })
+    }
+
+    /// Get external transfer summary for reconciliation
+    /// Returns transfers to/from external addresses (excludes internal validator account transfers)
+    ///
+    /// `internal_addresses` - addresses to exclude (vote account, identity, withdraw authority)
+    pub async fn get_external_transfer_summary(
+        &self,
+        internal_addresses: &[String],
+    ) -> Result<ExternalTransferSummary> {
+        // Build exclusion list for SQL
+        let internal_set: std::collections::HashSet<&str> = internal_addresses.iter().map(|s| s.as_str()).collect();
+
+        // Deposits IN from external addresses (exclude internal-to-internal)
+        let all_deposits: Vec<(String, String, String, String, i64)> = sqlx::query_as(
+            "SELECT from_address, to_address, from_label, from_category, SUM(amount_lamports) as total
+             FROM sol_transfers
+             GROUP BY from_address, to_address, from_label, from_category
+             ORDER BY total DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default();
+
+        // Filter: from_address is external (not in internal_addresses)
+        let mut deposits_in: Vec<ExternalAddressFlow> = all_deposits
+            .iter()
+            .filter(|(from, to, _, _, _)| {
+                // Include if FROM is external and TO is internal (deposit to us)
+                !internal_set.contains(from.as_str()) && internal_set.contains(to.as_str())
+            })
+            .fold(
+                std::collections::HashMap::new(),
+                |mut acc, (from, _, label, category, amount)| {
+                    let entry = acc
+                        .entry(from.clone())
+                        .or_insert((label.clone(), category.clone(), 0i64));
+                    entry.2 += amount;
+                    acc
+                },
+            )
+            .into_iter()
+            .map(|(addr, (label, category, amount))| ExternalAddressFlow {
+                address: addr,
+                label: if label.is_empty() { category } else { label },
+                amount_lamports: amount.max(0) as u64,
+            })
+            .collect();
+        deposits_in.sort_by(|a, b| b.amount_lamports.cmp(&a.amount_lamports));
+        deposits_in.truncate(10);
+
+        // Withdrawals OUT to external addresses
+        let all_withdrawals: Vec<(String, String, String, String, i64)> = sqlx::query_as(
+            "SELECT from_address, to_address, to_label, to_category, SUM(amount_lamports) as total
+             FROM sol_transfers
+             GROUP BY from_address, to_address, to_label, to_category
+             ORDER BY total DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default();
+
+        // Filter: to_address is external (not in internal_addresses)
+        let mut withdrawals_out: Vec<ExternalAddressFlow> = all_withdrawals
+            .iter()
+            .filter(|(from, to, _, _, _)| {
+                // Include if FROM is internal and TO is external (withdrawal from us)
+                internal_set.contains(from.as_str()) && !internal_set.contains(to.as_str())
+            })
+            .fold(
+                std::collections::HashMap::new(),
+                |mut acc, (_, to, label, category, amount)| {
+                    let entry = acc.entry(to.clone()).or_insert((label.clone(), category.clone(), 0i64));
+                    entry.2 += amount;
+                    acc
+                },
+            )
+            .into_iter()
+            .map(|(addr, (label, category, amount))| ExternalAddressFlow {
+                address: addr,
+                label: if label.is_empty() { category } else { label },
+                amount_lamports: amount.max(0) as u64,
+            })
+            .collect();
+        withdrawals_out.sort_by(|a, b| b.amount_lamports.cmp(&a.amount_lamports));
+        withdrawals_out.truncate(10);
+
+        Ok(ExternalTransferSummary {
+            deposits_in,
+            withdrawals_out,
+        })
+    }
+
+    // =========================================================================
     // Utilities
     // =========================================================================
 
@@ -1108,6 +1426,7 @@ fn category_to_string(cat: &AddressCategory) -> &'static str {
         AddressCategory::Exchange => "Exchange",
         AddressCategory::ValidatorSelf => "ValidatorSelf",
         AddressCategory::PersonalWallet => "PersonalWallet",
+        AddressCategory::DeFiProtocol => "DeFiProtocol",
         AddressCategory::SystemProgram => "SystemProgram",
         AddressCategory::StakeProgram => "StakeProgram",
         AddressCategory::VoteProgram => "VoteProgram",
@@ -1124,6 +1443,7 @@ fn string_to_category(s: &str) -> AddressCategory {
         "Exchange" => AddressCategory::Exchange,
         "ValidatorSelf" => AddressCategory::ValidatorSelf,
         "PersonalWallet" => AddressCategory::PersonalWallet,
+        "DeFiProtocol" => AddressCategory::DeFiProtocol,
         "SystemProgram" => AddressCategory::SystemProgram,
         "StakeProgram" => AddressCategory::StakeProgram,
         "VoteProgram" => AddressCategory::VoteProgram,
@@ -1161,4 +1481,24 @@ impl std::fmt::Display for CacheStats {
             self.recurring_expenses
         )
     }
+}
+
+/// Summary of external transfers for reconciliation
+#[derive(Debug, Default)]
+pub struct ExternalTransferSummary {
+    /// Deposits received from external addresses
+    pub deposits_in: Vec<ExternalAddressFlow>,
+    /// Withdrawals sent to external addresses
+    pub withdrawals_out: Vec<ExternalAddressFlow>,
+}
+
+/// SOL flow to/from an external address
+#[derive(Debug)]
+pub struct ExternalAddressFlow {
+    /// The external address
+    pub address: String,
+    /// Human-readable label (if known)
+    pub label: String,
+    /// Total amount in lamports
+    pub amount_lamports: u64,
 }

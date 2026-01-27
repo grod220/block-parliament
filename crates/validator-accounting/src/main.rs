@@ -13,6 +13,7 @@ mod expenses;
 mod jito;
 mod leader_fees;
 mod notion;
+mod positions;
 mod prices;
 mod reports;
 mod transactions;
@@ -74,6 +75,15 @@ fn mask_api_key(url: &str) -> String {
         format!("{}****", prefix)
     } else {
         url.to_string()
+    }
+}
+
+/// Shorten a base58 address for display (e.g., "ABC123...XYZ789")
+fn shorten_address(addr: &str) -> String {
+    if addr.len() > 12 {
+        format!("{}...{}", &addr[..6], &addr[addr.len() - 4..])
+    } else {
+        addr.to_string()
     }
 }
 
@@ -155,6 +165,12 @@ enum Command {
     Dune {
         #[command(subcommand)]
         action: DuneCommand,
+    },
+
+    /// Position tracking (balance sheet view - where is the money now?)
+    Position {
+        #[command(subcommand)]
+        action: PositionCommand,
     },
 }
 
@@ -333,6 +349,18 @@ enum DuneCommand {
     },
 }
 
+#[derive(Subcommand, Debug)]
+enum PositionCommand {
+    /// Show current position (balance sheet snapshot)
+    Now,
+
+    /// Run reconciliation check (expected vs actual balances)
+    Reconcile,
+
+    /// Show stake accounts owned by validator
+    Stake,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -362,6 +390,7 @@ async fn handle_command(command: Command, cache: &Cache, config_path: Option<&Pa
         Command::LeaderSlots { action } => handle_leader_slots_command(action, cache, config_path).await,
         Command::VoteCosts { action } => handle_vote_costs_command(action, cache).await,
         Command::Dune { action } => handle_dune_command(action, cache, config_path).await,
+        Command::Position { action } => handle_position_command(action, cache, config_path).await,
     }
 }
 
@@ -923,6 +952,341 @@ async fn handle_dune_command(action: DuneCommand, cache: &Cache, config_path: Op
     }
 
     Ok(())
+}
+
+/// Handle position tracking subcommands
+async fn handle_position_command(action: PositionCommand, cache: &Cache, config_path: Option<&PathBuf>) -> Result<()> {
+    // Load config and create RPC client
+    let file_config = load_config_file(config_path)?;
+    let config = config::Config::from_file(&file_config, None)?;
+    let rpc_client = RpcClient::new_with_commitment(config.rpc_url.clone(), CommitmentConfig::confirmed());
+
+    match action {
+        PositionCommand::Now => {
+            println!("Validator Position Snapshot");
+            println!("============================\n");
+
+            // Fetch all balances atomically
+            println!("Fetching account balances...");
+            let (balances, snapshot_slot) = positions::fetch_all_balances_atomic(&rpc_client, &config).await?;
+            let block_time = rpc_client.get_block_time(snapshot_slot).ok();
+
+            // Fetch jitoSOL balance and rate
+            let jitosol_lamports = positions::fetch_jitosol_balance(&rpc_client, &config.identity).await?;
+            let jitosol_rate = positions::fetch_jitosol_exchange_rate(&rpc_client).await?;
+
+            // Discover stake accounts (using snapshot_slot for consistency tracking)
+            let stake_accounts =
+                positions::discover_stake_accounts(&rpc_client, &config.withdraw_authority, snapshot_slot).await?;
+
+            // Fetch actual income/expense data from cache
+            let income_data = cache.get_reconciliation_data().await?;
+
+            let position = positions::build_position_snapshot(
+                &balances,
+                &stake_accounts,
+                jitosol_lamports,
+                jitosol_rate,
+                &income_data,
+                snapshot_slot,
+                block_time.unwrap_or(0),
+            );
+
+            // Display position
+            println!(
+                "Snapshot at slot {} ({})\n",
+                snapshot_slot,
+                block_time
+                    .map(|t| chrono::DateTime::from_timestamp(t, 0)
+                        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                        .unwrap_or_else(|| "-".to_string()))
+                    .unwrap_or_else(|| "-".to_string())
+            );
+
+            println!("Core Accounts:");
+            println!("  {:25} {:>15} {:>15}", "Account", "Balance", "Withdrawable");
+            println!("  {}", "-".repeat(55));
+
+            for balance in &balances {
+                println!(
+                    "  {:25} {:>15} {:>15}",
+                    balance.account_type.to_string(),
+                    format!("{:.4} SOL", balance.balance_sol()),
+                    format!("{:.4} SOL", balance.withdrawable_sol()),
+                );
+            }
+
+            if jitosol_lamports > 0 {
+                println!("\njitoSOL:");
+                println!(
+                    "  Balance: {} jitoSOL",
+                    positions::lamports_to_sol_string(jitosol_lamports, 6)
+                );
+                println!("  Rate: 1 jitoSOL = {:.4} SOL", jitosol_rate);
+                println!(
+                    "  SOL equivalent: {} SOL",
+                    positions::lamports_to_sol_string(position.jitosol_sol_equivalent, 4)
+                );
+            }
+
+            if !stake_accounts.is_empty() {
+                println!("\nStake Accounts ({}):", stake_accounts.len());
+                println!("  {:44} {:>12} {:>10}", "Account", "Balance", "State");
+                println!("  {}", "-".repeat(70));
+                for stake in &stake_accounts {
+                    println!(
+                        "  {} {:>12} {:>10}",
+                        stake.account,
+                        format!("{:.4} SOL", stake.balance_sol()),
+                        stake.state.to_string(),
+                    );
+                }
+                println!(
+                    "\n  Liquid: {} SOL",
+                    positions::lamports_to_sol_string(position.stake_accounts_liquid, 4)
+                );
+                println!(
+                    "  Locked: {} SOL",
+                    positions::lamports_to_sol_string(position.stake_accounts_locked, 4)
+                );
+            }
+
+            println!("\nTotals:");
+            println!(
+                "  Total liquid:  {} SOL",
+                positions::lamports_to_sol_string(position.total_liquid_lamports, 4)
+            );
+            println!(
+                "  Total locked:  {} SOL",
+                positions::lamports_to_sol_string(position.total_locked_lamports, 4)
+            );
+            println!(
+                "  Total assets:  {} SOL",
+                positions::lamports_to_sol_string(position.total_assets_lamports, 4)
+            );
+
+            // Store snapshot in cache
+            let date = chrono::DateTime::from_timestamp(block_time.unwrap_or(0), 0)
+                .map(|dt| dt.format("%Y-%m-%d").to_string())
+                .unwrap_or_else(|| {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    chrono::DateTime::from_timestamp(now as i64, 0)
+                        .map(|dt| dt.format("%Y-%m-%d").to_string())
+                        .unwrap_or_else(|| "unknown".to_string())
+                });
+            let epoch = rpc_client.get_epoch_info()?.epoch;
+            cache.store_balance_snapshot(&position, &date, epoch).await?;
+            println!("\nSnapshot stored to cache.");
+
+            Ok(())
+        }
+
+        PositionCommand::Reconcile => {
+            println!("Position Reconciliation");
+            println!("=======================\n");
+
+            // Fetch current position
+            let (balances, snapshot_slot) = positions::fetch_all_balances_atomic(&rpc_client, &config).await?;
+            let block_time = rpc_client.get_block_time(snapshot_slot).ok();
+            let jitosol_lamports = positions::fetch_jitosol_balance(&rpc_client, &config.identity).await?;
+            let jitosol_rate = positions::fetch_jitosol_exchange_rate(&rpc_client).await?;
+            let stake_accounts =
+                positions::discover_stake_accounts(&rpc_client, &config.withdraw_authority, snapshot_slot).await?;
+
+            // Fetch actual income/expense data from cache
+            let income_data = cache.get_reconciliation_data().await?;
+
+            let position = positions::build_position_snapshot(
+                &balances,
+                &stake_accounts,
+                jitosol_lamports,
+                jitosol_rate,
+                &income_data,
+                snapshot_slot,
+                block_time.unwrap_or(0),
+            );
+
+            let reconciliation = positions::reconcile(&position);
+
+            println!("Cash Flow Analysis:");
+            println!(
+                "  Lifetime income:     {} SOL",
+                positions::lamports_to_sol_string(position.lifetime_income_lamports, 4)
+            );
+            println!(
+                "  Lifetime expenses:   {} SOL",
+                positions::lamports_to_sol_string(position.lifetime_expenses_lamports, 4)
+            );
+            println!(
+                "  Lifetime withdrawals:{} SOL",
+                positions::lamports_to_sol_string(position.lifetime_withdrawals_lamports, 4)
+            );
+            println!(
+                "  Lifetime deposits:   {} SOL",
+                positions::lamports_to_sol_string(position.lifetime_deposits_lamports, 4)
+            );
+            println!();
+            println!(
+                "  Net cash flow:       {} SOL",
+                positions::signed_lamports_to_sol_string(reconciliation.net_cash_flow_lamports, 4)
+            );
+            println!(
+                "  LST appreciation:    {} SOL",
+                positions::signed_lamports_to_sol_string(reconciliation.lst_adjustment_lamports, 4)
+            );
+            println!();
+            println!("Reconciliation:");
+            println!(
+                "  Expected balance:    {} SOL",
+                positions::signed_lamports_to_sol_string(reconciliation.expected_lamports, 4)
+            );
+            println!(
+                "  Actual balance:      {} SOL",
+                positions::lamports_to_sol_string(reconciliation.actual_lamports, 4)
+            );
+            println!(
+                "  Difference:          {} SOL",
+                positions::signed_lamports_to_sol_string(reconciliation.difference_lamports, 4)
+            );
+            println!();
+            println!("Status: {}", reconciliation.status);
+
+            // Show external transfer details to help explain variance
+            // Exclude: validator accounts, personal wallet, token accounts, and DeFi protocols
+            let mut internal_addresses = vec![
+                config.vote_account.to_string(),
+                config.identity.to_string(),
+                config.withdraw_authority.to_string(),
+                config.personal_wallet.to_string(),
+            ];
+
+            // Add token accounts (ATAs) for each wallet - these are also "internal"
+            // since they hold the user's tokens (wSOL, mSOL, USDC, jitoSOL)
+            for wallet in [&config.identity, &config.withdraw_authority, &config.personal_wallet] {
+                internal_addresses.extend(positions::compute_common_atas(wallet));
+            }
+
+            // Add known DeFi protocol addresses (Jupiter, Raydium, etc.)
+            // These are intermediate routing, not true external destinations
+            internal_addresses.extend(crate::addresses::get_defi_protocol_addresses());
+            let transfer_summary = cache.get_external_transfer_summary(&internal_addresses).await?;
+            if !transfer_summary.deposits_in.is_empty() || !transfer_summary.withdrawals_out.is_empty() {
+                println!("\nTracked External Transfers:");
+
+                if !transfer_summary.deposits_in.is_empty() {
+                    println!("  Deposits IN:");
+                    for flow in &transfer_summary.deposits_in {
+                        let label = if flow.label.is_empty() {
+                            shorten_address(&flow.address)
+                        } else {
+                            flow.label.clone()
+                        };
+                        println!(
+                            "    {:20} {:>12} SOL",
+                            label,
+                            positions::lamports_to_sol_string(flow.amount_lamports, 4)
+                        );
+                    }
+                }
+
+                if !transfer_summary.withdrawals_out.is_empty() {
+                    println!("  Withdrawals OUT:");
+                    for flow in &transfer_summary.withdrawals_out {
+                        let label = if flow.label.is_empty() {
+                            shorten_address(&flow.address)
+                        } else {
+                            flow.label.clone()
+                        };
+                        println!(
+                            "    {:20} {:>12} SOL",
+                            label,
+                            positions::lamports_to_sol_string(flow.amount_lamports, 4)
+                        );
+                    }
+                }
+            }
+
+            if reconciliation.status == positions::ReconciliationStatus::Variance {
+                println!("\nNote: Variance may be due to:");
+                println!("  - Untracked deposits or withdrawals");
+                println!("  - jitoSOL rate fluctuation");
+                println!("  - Missing expense records");
+                println!("  - Transaction fees not captured");
+            }
+
+            Ok(())
+        }
+
+        PositionCommand::Stake => {
+            println!("Stake Accounts");
+            println!("==============\n");
+
+            // Get current slot for snapshot tracking
+            let snapshot_slot = rpc_client.get_slot()?;
+            let stake_accounts =
+                positions::discover_stake_accounts(&rpc_client, &config.withdraw_authority, snapshot_slot).await?;
+
+            if stake_accounts.is_empty() {
+                println!(
+                    "No stake accounts found for withdraw authority: {}",
+                    config.withdraw_authority
+                );
+                return Ok(());
+            }
+
+            println!(
+                "Found {} stake account(s) for withdraw authority: {}\n",
+                stake_accounts.len(),
+                config.withdraw_authority
+            );
+
+            println!("{:44} {:>14} {:>12} {:>8}", "Account", "Balance", "State", "Liquid?");
+            println!("{}", "-".repeat(82));
+
+            let mut total_liquid = 0u64;
+            let mut total_locked = 0u64;
+
+            for stake in &stake_accounts {
+                let liquid_str = if stake.is_liquid { "Yes" } else { "No" };
+                println!(
+                    "{} {:>14} {:>12} {:>8}",
+                    stake.account,
+                    format!("{:.4} SOL", stake.balance_sol()),
+                    stake.state.to_string(),
+                    liquid_str,
+                );
+
+                if stake.is_liquid {
+                    total_liquid += stake.balance_lamports;
+                } else {
+                    total_locked += stake.balance_lamports;
+                }
+            }
+
+            println!("{}", "-".repeat(82));
+            println!(
+                "Total liquid: {} SOL",
+                positions::lamports_to_sol_string(total_liquid, 4)
+            );
+            println!(
+                "Total locked: {} SOL",
+                positions::lamports_to_sol_string(total_locked, 4)
+            );
+            println!(
+                "Grand total:  {} SOL",
+                positions::lamports_to_sol_string(total_liquid + total_locked, 4)
+            );
+
+            // Store stake accounts to cache
+            cache.store_stake_accounts(&stake_accounts).await?;
+            println!("\nStake accounts stored to cache.");
+
+            Ok(())
+        }
+    }
 }
 
 // =============================================================================

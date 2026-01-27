@@ -59,8 +59,10 @@ pub const REFERENCE_EPOCH_TIMESTAMP: i64 = 1765843200;
 pub const SFDP_REIMBURSEMENT: &str = "DtZWL3BPKa5hw7yQYvaFR29PcXThpLHVU2XAAZrcLiSe";
 
 /// jitoSOL mint address (SPL token)
-#[allow(dead_code)]
 pub const JITOSOL_MINT: &str = "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn";
+
+/// Jito stake pool address (for fetching jitoSOL exchange rate)
+pub const JITO_STAKE_POOL: &str = "Jito4APyf642JPZPx3hGc6WWJ8zPKtRbRs4P815Awbb";
 
 /// Jito BAM Boost program ID (JIP-31)
 #[allow(dead_code)]
@@ -68,6 +70,27 @@ pub const BAM_BOOST_PROGRAM: &str = "BoostxbPp2ENYHGcTLYt1obpcY13HE4NojdqNWdzqSS
 
 /// First epoch with BAM rewards available (Block Assembly Marketplace started ~epoch 912)
 pub const BAM_FIRST_EPOCH: u64 = 912;
+
+// =============================================================================
+// Account Sizes (for rent-exempt calculations)
+// =============================================================================
+
+/// Vote account data size (bytes) - for rent-exempt reserve calculation
+pub const VOTE_ACCOUNT_SIZE: usize = 3762;
+
+/// System account minimum size (bytes)
+pub const SYSTEM_ACCOUNT_SIZE: usize = 0;
+
+// =============================================================================
+// Position Tracking
+// =============================================================================
+
+/// Lamports per SOL as u64 (for integer math)
+pub const LAMPORTS_PER_SOL_U64: u64 = 1_000_000_000;
+
+/// Reconciliation tolerance in lamports (0.0001 SOL)
+/// Allows for minor dust/rounding differences
+pub const RECONCILIATION_TOLERANCE_LAMPORTS: i64 = 100_000;
 
 // =============================================================================
 // File Names

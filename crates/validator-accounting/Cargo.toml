@@ -13,6 +13,14 @@ solana-client.workspace = true
 solana-sdk.workspace = true
 solana-transaction-status.workspace = true
 solana-commitment-config.workspace = true
+solana-account-decoder.workspace = true
+
+# SPL tokens (for jitoSOL balance tracking)
+spl-associated-token-account.workspace = true
+spl-token.workspace = true
+
+# Binary serialization (for stake account parsing)
+bincode.workspace = true
 
 # Async runtime
 tokio.workspace = true

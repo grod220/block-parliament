@@ -25,6 +25,8 @@ pub enum AddressCategory {
     ValidatorSelf,
     /// Personal wallet (for seeding detection)
     PersonalWallet,
+    /// DeFi protocol (DEX, AMM, lending - intermediate routing)
+    DeFiProtocol,
     /// System program
     SystemProgram,
     /// Stake program
@@ -232,6 +234,131 @@ pub static KNOWN_ADDRESSES: LazyLock<HashMap<Pubkey, AddressLabel>> = LazyLock::
     );
 
     // =========================================================================
+    // DeFi Protocols (DEX aggregators, AMMs, liquid staking)
+    // These are intermediate routing addresses, not external destinations
+    // =========================================================================
+
+    // Jupiter Aggregator
+    add_address(
+        &mut map,
+        "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",
+        AddressCategory::DeFiProtocol,
+        "Jupiter v6",
+        Some("Jupiter aggregator program"),
+    );
+    add_address(
+        &mut map,
+        "JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcGuJB",
+        AddressCategory::DeFiProtocol,
+        "Jupiter v4",
+        Some("Jupiter aggregator v4"),
+    );
+
+    // Raydium AMM
+    add_address(
+        &mut map,
+        "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
+        AddressCategory::DeFiProtocol,
+        "Raydium AMM",
+        Some("Raydium AMM program"),
+    );
+
+    // Orca Whirlpool
+    add_address(
+        &mut map,
+        "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+        AddressCategory::DeFiProtocol,
+        "Orca Whirlpool",
+        Some("Orca concentrated liquidity"),
+    );
+
+    // Marinade (liquid staking)
+    add_address(
+        &mut map,
+        "MarBmsSgKXdrN1egZf5sqe1TMai9K1rChYNDJgjq7aD",
+        AddressCategory::DeFiProtocol,
+        "Marinade Finance",
+        Some("Marinade liquid staking"),
+    );
+
+    // Phoenix DEX
+    add_address(
+        &mut map,
+        "PhoeNiXZ8ByJGLkxNfZRnkUfjvmuYqLR89jjFHGqdXY",
+        AddressCategory::DeFiProtocol,
+        "Phoenix DEX",
+        Some("Phoenix order book DEX"),
+    );
+
+    // Meteora
+    add_address(
+        &mut map,
+        "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+        AddressCategory::DeFiProtocol,
+        "Meteora DLMM",
+        Some("Meteora dynamic liquidity"),
+    );
+
+    // Token Program (SPL Token)
+    add_address(
+        &mut map,
+        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        AddressCategory::DeFiProtocol,
+        "SPL Token Program",
+        Some("Token program for swaps"),
+    );
+
+    // Associated Token Account Program
+    add_address(
+        &mut map,
+        "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+        AddressCategory::DeFiProtocol,
+        "ATA Program",
+        Some("Associated token accounts"),
+    );
+
+    // Jupiter pool/market accounts (specific to swap transactions)
+    add_address(
+        &mut map,
+        "GyY4VgEpJQhiKZRAJJmoM4hv5Q2xC4pvX68MGrGidxyG",
+        AddressCategory::DeFiProtocol,
+        "Jupiter Pool",
+        Some("Jupiter swap routing"),
+    );
+
+    // SolFi market (wSOL-USDC)
+    add_address(
+        &mut map,
+        "CRo8DBwrmd97DJfAnvCv96tZPL5Mktf2NZy2ZnhDer1A",
+        AddressCategory::DeFiProtocol,
+        "SolFi wSOL-USDC",
+        Some("SolFi market token account"),
+    );
+    add_address(
+        &mut map,
+        "65ZHSArs5XxPseKQbB1B4r16vDxMWnCxHMzogDAqiDUc",
+        AddressCategory::DeFiProtocol,
+        "SolFi Market Owner",
+        Some("SolFi wSOL-USDC market owner"),
+    );
+
+    // Common wSOL intermediate accounts used in swaps
+    add_address(
+        &mut map,
+        "CTyFguG69kwYrzk24P3UuBvY1rR5atu9kf2S6XEwAU8X",
+        AddressCategory::DeFiProtocol,
+        "wSOL Swap Account",
+        Some("Wrapped SOL intermediate for swaps"),
+    );
+    add_address(
+        &mut map,
+        "EHBeyyQwD6MLa48fdxSjEaMHLur6BrcGtVcJ5c66AvaC",
+        AddressCategory::DeFiProtocol,
+        "wSOL Swap Account",
+        Some("Wrapped SOL intermediate for swaps"),
+    );
+
+    // =========================================================================
     // System Programs
     // =========================================================================
 
@@ -312,4 +439,19 @@ pub fn is_jito(pubkey: &Pubkey) -> bool {
 /// Check if address is an exchange
 pub fn is_exchange(pubkey: &Pubkey) -> bool {
     matches!(get_category(pubkey), AddressCategory::Exchange)
+}
+
+/// Check if address is a DeFi protocol (DEX, AMM, liquid staking)
+#[allow(dead_code)]
+pub fn is_defi_protocol(pubkey: &Pubkey) -> bool {
+    matches!(get_category(pubkey), AddressCategory::DeFiProtocol)
+}
+
+/// Get all known DeFi protocol addresses as strings (for filtering)
+pub fn get_defi_protocol_addresses() -> Vec<String> {
+    KNOWN_ADDRESSES
+        .iter()
+        .filter(|(_, label)| label.category == AddressCategory::DeFiProtocol)
+        .map(|(pubkey, _)| pubkey.to_string())
+        .collect()
 }
