@@ -369,15 +369,26 @@ fn get_rent_exempt_for_type(client: &RpcClient, account_type: AccountType) -> Re
         .context("Failed to get rent-exempt minimum")
 }
 
+/// Static program IDs for ATA computation (parsed once)
+mod ata_programs {
+    use solana_sdk::pubkey::Pubkey;
+    use std::str::FromStr;
+    use std::sync::LazyLock;
+
+    pub static SPL_TOKEN_PROGRAM: LazyLock<Pubkey> = LazyLock::new(|| {
+        Pubkey::from_str("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA").expect("Invalid SPL Token program ID")
+    });
+
+    pub static ATA_PROGRAM: LazyLock<Pubkey> = LazyLock::new(|| {
+        Pubkey::from_str("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL").expect("Invalid ATA program ID")
+    });
+}
+
 /// Compute an Associated Token Account (ATA) address for a given owner and mint
 pub fn compute_ata(owner: &Pubkey, mint: &Pubkey) -> Pubkey {
-    let spl_token_program =
-        Pubkey::from_str("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA").expect("Invalid SPL Token program ID");
-    let ata_program = Pubkey::from_str("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL").expect("Invalid ATA program ID");
-
     let (ata, _bump) = Pubkey::find_program_address(
-        &[owner.as_ref(), spl_token_program.as_ref(), mint.as_ref()],
-        &ata_program,
+        &[owner.as_ref(), ata_programs::SPL_TOKEN_PROGRAM.as_ref(), mint.as_ref()],
+        &ata_programs::ATA_PROGRAM,
     );
 
     ata

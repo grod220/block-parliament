@@ -1269,8 +1269,7 @@ impl Cache {
              ORDER BY total DESC",
         )
         .fetch_all(&self.pool)
-        .await
-        .unwrap_or_default();
+        .await?;
 
         // Filter: from_address is external (not in internal_addresses)
         let mut deposits_in: Vec<ExternalAddressFlow> = all_deposits
@@ -1296,7 +1295,7 @@ impl Cache {
                 amount_lamports: amount.max(0) as u64,
             })
             .collect();
-        deposits_in.sort_by(|a, b| b.amount_lamports.cmp(&a.amount_lamports));
+        deposits_in.sort_by_key(|a| std::cmp::Reverse(a.amount_lamports));
         deposits_in.truncate(10);
 
         // Withdrawals OUT to external addresses
@@ -1307,8 +1306,7 @@ impl Cache {
              ORDER BY total DESC",
         )
         .fetch_all(&self.pool)
-        .await
-        .unwrap_or_default();
+        .await?;
 
         // Filter: to_address is external (not in internal_addresses)
         let mut withdrawals_out: Vec<ExternalAddressFlow> = all_withdrawals
@@ -1332,7 +1330,7 @@ impl Cache {
                 amount_lamports: amount.max(0) as u64,
             })
             .collect();
-        withdrawals_out.sort_by(|a, b| b.amount_lamports.cmp(&a.amount_lamports));
+        withdrawals_out.sort_by_key(|a| std::cmp::Reverse(a.amount_lamports));
         withdrawals_out.truncate(10);
 
         Ok(ExternalTransferSummary {

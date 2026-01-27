@@ -1165,7 +1165,13 @@ async fn handle_position_command(action: PositionCommand, cache: &Cache, config_
 
             // Add token accounts (ATAs) for each wallet - these are also "internal"
             // since they hold the user's tokens (wSOL, mSOL, USDC, jitoSOL)
-            for wallet in [&config.identity, &config.withdraw_authority, &config.personal_wallet] {
+            // Include vote_account for completeness (though vote accounts rarely hold tokens)
+            for wallet in [
+                &config.vote_account,
+                &config.identity,
+                &config.withdraw_authority,
+                &config.personal_wallet,
+            ] {
                 internal_addresses.extend(positions::compute_common_atas(wallet));
             }
 
