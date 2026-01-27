@@ -10,6 +10,7 @@ pub struct Config {
 
     pub contact: Contact,
     pub links: Links,
+    pub lst: LstConfig,
     pub changelog: &'static [ChangelogEntry],
 }
 
@@ -24,6 +25,17 @@ pub struct Links {
     pub sfdp: &'static str,
     pub jito: &'static str,
     pub ibrl: &'static str,
+}
+
+/// Liquid Staking Token configuration
+/// Set these values when your single-validator LST is available
+pub struct LstConfig {
+    /// The SPL token mint address (base58), or None if not yet available
+    pub mint_address: Option<&'static str>,
+    /// Token symbol (e.g., "bpSOL"), or None if not yet available
+    pub symbol: Option<&'static str>,
+    /// Primary URL for liquid staking (e.g., Sanctum), or None if not yet available
+    pub primary_url: Option<&'static str>,
 }
 
 pub struct ChangelogEntry {
@@ -50,8 +62,20 @@ pub static CONFIG: Config = Config {
         ibrl: "https://ibrl.wtf/validator/mD1afZhSisoXfJLT8nYwSFANqjr1KPoDUEpYTEfFX1e/",
     },
 
+    // Liquid Staking Token - set these when available
+    // To enable: replace None with Some("value")
+    lst: LstConfig {
+        mint_address: None, // e.g., Some("BPso1...mint_address")
+        symbol: None,       // e.g., Some("bpSOL")
+        primary_url: None,  // e.g., Some("https://app.sanctum.so/...")
+    },
+
     // Changelog entries - newest first
     changelog: &[
+        ChangelogEntry {
+            date: "2026-01-27",
+            event: "Added delegate / liquid stake page",
+        },
         ChangelogEntry {
             date: "2026-01-22",
             event: "Added security policy page",

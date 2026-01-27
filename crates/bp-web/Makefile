@@ -1,7 +1,7 @@
 .PHONY: dev release css clean run run-release
 
 CSS_INPUT := style/tailwind.css
-CSS_OUTPUT := ../../target/site/pkg/bp-web.css
+CSS_OUTPUT := target/site/pkg/bp-web.css
 
 # Development build
 dev: css

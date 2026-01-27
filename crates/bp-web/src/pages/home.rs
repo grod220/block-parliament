@@ -43,53 +43,83 @@ pub fn HomePage() -> impl IntoView {
                 </p>
             </Section>
 
+            // Pages
+            <Section id="pages" title="Pages">
+                <div class="space-y-1">
+                    <div>
+                        <a href="/delegate">"delegate \u{2192}"</a>
+                    </div>
+                    <div>
+                        <a href="/security">"security policy \u{2192}"</a>
+                    </div>
+                </div>
+            </Section>
+
             // Metrics
             <Section id="metrics" title="Metrics">
                 <Metrics />
             </Section>
 
-            // Pages
-            <Section id="pages" title="Pages">
-                <div class="space-y-1">
-                    <div>
-                        <a href="/security">"security policy"</a>
-                    </div>
-                </div>
+            // Delegate CTA
+            <Section id="delegate" title="Delegate">
+                <p>
+                    "Earn staking rewards while supporting independent infrastructure. "
+                    "Fully non-custodial\u{2014}your SOL never leaves your control. "
+                    <a href="/delegate">"How to delegate \u{2192}"</a>
+                </p>
             </Section>
 
             // External Links
             <Section id="links" title="External Links">
-                <div class="space-y-1">
-                    <div>
-                        <a href=CONFIG.links.validators_app target="_blank" rel="noopener noreferrer">
-                            "validators.app ↗"
-                        </a>
-                    </div>
-                    <div>
-                        <a href=CONFIG.links.ibrl target="_blank" rel="noopener noreferrer">
-                            "ibrl ↗"
-                        </a>
-                    </div>
-                    <div>
-                        <a href=CONFIG.links.stakewiz target="_blank" rel="noopener noreferrer">
-                            "stakewiz ↗"
-                        </a>
-                    </div>
-                    <div>
-                        <a href=CONFIG.links.sfdp target="_blank" rel="noopener noreferrer">
-                            "solana foundation delegation program ↗"
-                        </a>
-                    </div>
-                    <div>
-                        <a href=CONFIG.links.jito target="_blank" rel="noopener noreferrer">
-                            "jito stakenet ↗"
-                        </a>
-                    </div>
-                    <div>
-                        <a href=CONFIG.links.solscan target="_blank" rel="noopener noreferrer">
-                            "solscan ↗"
-                        </a>
-                    </div>
+                <div class="flex flex-wrap gap-2">
+                    <a
+                        href=CONFIG.links.validators_app
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="px-3 py-1 border border-dashed border-[var(--rule)] hover:bg-[var(--rule)] transition-colors inline-block"
+                    >
+                        "validators.app \u{2197}"
+                    </a>
+                    <a
+                        href=CONFIG.links.ibrl
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="px-3 py-1 border border-dashed border-[var(--rule)] hover:bg-[var(--rule)] transition-colors inline-block"
+                    >
+                        "ibrl \u{2197}"
+                    </a>
+                    <a
+                        href=CONFIG.links.stakewiz
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="px-3 py-1 border border-dashed border-[var(--rule)] hover:bg-[var(--rule)] transition-colors inline-block"
+                    >
+                        "stakewiz \u{2197}"
+                    </a>
+                    <a
+                        href=CONFIG.links.sfdp
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="px-3 py-1 border border-dashed border-[var(--rule)] hover:bg-[var(--rule)] transition-colors inline-block"
+                    >
+                        "SFDP \u{2197}"
+                    </a>
+                    <a
+                        href=CONFIG.links.jito
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="px-3 py-1 border border-dashed border-[var(--rule)] hover:bg-[var(--rule)] transition-colors inline-block"
+                    >
+                        "jito stakenet \u{2197}"
+                    </a>
+                    <a
+                        href=CONFIG.links.solscan
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="px-3 py-1 border border-dashed border-[var(--rule)] hover:bg-[var(--rule)] transition-colors inline-block"
+                    >
+                        "solscan \u{2197}"
+                    </a>
                 </div>
             </Section>
 
