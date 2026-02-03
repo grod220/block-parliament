@@ -22,6 +22,8 @@ pub struct FileConfig {
     pub notion: Option<NotionConfig>,
     #[serde(default)]
     pub bam: Option<BamConfig>,
+    #[serde(default)]
+    pub doublezero: Option<DoubleZeroConfig>,
 }
 
 /// Jito BAM (Block Assembly Marketplace) configuration
@@ -40,6 +42,23 @@ pub struct BamConfig {
     pub jitosol_rate: f64,
 }
 
+/// DoubleZero fee configuration (block reward sharing)
+#[derive(Debug, Clone, Deserialize)]
+pub struct DoubleZeroConfig {
+    /// Enable DoubleZero fee tracking (default: true if section present)
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Fee rate (default: 0.05 = 5%)
+    #[serde(default = "default_doublezero_fee_rate")]
+    pub fee_rate: f64,
+    /// First epoch with DoubleZero fees (default: 859)
+    #[serde(default = "default_doublezero_first_epoch")]
+    pub first_epoch: u64,
+    /// Deposit account PDA (optional, used for payment categorization)
+    #[serde(default)]
+    pub deposit_account: Option<String>,
+}
+
 fn default_true() -> bool {
     true
 }
@@ -50,6 +69,14 @@ fn default_bam_first_epoch() -> u64 {
 
 fn default_jitosol_rate() -> f64 {
     1.0 // Conservative default
+}
+
+fn default_doublezero_fee_rate() -> f64 {
+    constants::DOUBLEZERO_FEE_RATE
+}
+
+fn default_doublezero_first_epoch() -> u64 {
+    constants::DOUBLEZERO_FIRST_EPOCH
 }
 
 /// Validator-specific configuration
@@ -141,6 +168,14 @@ pub struct Config {
     pub bam_first_epoch: u64,
     /// jitoSOL to SOL exchange rate for BAM reward valuation
     pub bam_jitosol_rate: f64,
+    /// DoubleZero fee tracking enabled
+    pub doublezero_enabled: bool,
+    /// DoubleZero fee rate (e.g., 0.05 = 5%)
+    pub doublezero_fee_rate: f64,
+    /// First epoch with DoubleZero fees
+    pub doublezero_first_epoch: u64,
+    /// DoubleZero deposit account PDA (optional)
+    pub doublezero_deposit_account: Option<Pubkey>,
 }
 
 impl Config {
@@ -153,6 +188,21 @@ impl Config {
             Some(bam) => (bam.enabled, bam.first_epoch, bam.jitosol_rate),
             None => (true, constants::BAM_FIRST_EPOCH, 1.0), // Enabled by default, conservative rate
         };
+
+        // DoubleZero config defaults (disabled unless section present)
+        let (doublezero_enabled, doublezero_fee_rate, doublezero_first_epoch, doublezero_deposit_account) =
+            match &file_config.doublezero {
+                Some(dz) => {
+                    let deposit = match dz.deposit_account.as_deref() {
+                        Some(addr) => Some(
+                            Pubkey::from_str(addr).with_context(|| "Invalid doublezero.deposit_account address")?,
+                        ),
+                        None => None,
+                    };
+                    (dz.enabled, dz.fee_rate, dz.first_epoch, deposit)
+                }
+                None => (false, constants::DOUBLEZERO_FEE_RATE, constants::DOUBLEZERO_FIRST_EPOCH, None),
+            };
 
         Ok(Self {
             // Parse validator addresses from config
@@ -189,6 +239,12 @@ impl Config {
             bam_enabled,
             bam_first_epoch,
             bam_jitosol_rate,
+
+            // DoubleZero fee tracking
+            doublezero_enabled,
+            doublezero_fee_rate,
+            doublezero_first_epoch,
+            doublezero_deposit_account,
         })
     }
 
@@ -200,6 +256,12 @@ impl Config {
     /// Check if a pubkey is any account we care about (including personal wallet)
     pub fn is_relevant_account(&self, pubkey: &Pubkey) -> bool {
         self.is_our_account(pubkey) || *pubkey == self.personal_wallet
+    }
+
+    /// Get DoubleZero fee rate as basis points (0-10000)
+    pub fn doublezero_fee_rate_bps(&self) -> u64 {
+        let rate = self.doublezero_fee_rate.clamp(0.0, 1.0);
+        (rate * 10_000.0).round() as u64
     }
 
     /// Calculate SFDP vote cost coverage percentage for a given date

@@ -8,6 +8,7 @@ mod bam;
 mod cache;
 mod config;
 mod constants;
+mod doublezero;
 mod dune;
 mod expenses;
 mod jito;
@@ -16,12 +17,12 @@ mod notion;
 mod positions;
 mod prices;
 mod reports;
+mod rpc;
 mod transactions;
 mod vote_costs;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use solana_client::rpc_client::RpcClient;
 use solana_commitment_config::CommitmentConfig;
 use std::path::PathBuf;
 
@@ -959,7 +960,7 @@ async fn handle_position_command(action: PositionCommand, cache: &Cache, config_
     // Load config and create RPC client
     let file_config = load_config_file(config_path)?;
     let config = config::Config::from_file(&file_config, None)?;
-    let rpc_client = RpcClient::new_with_commitment(config.rpc_url.clone(), CommitmentConfig::confirmed());
+    let rpc_client = rpc::new_rpc_client(&config.rpc_url, CommitmentConfig::confirmed());
 
     match action {
         PositionCommand::Now => {
@@ -1364,10 +1365,19 @@ async fn run_report_generation(args: Args, cache: Cache) -> Result<()> {
 
     // Load config file and initialize runtime configuration
     let file_config = load_config_file(args.config.as_ref())?;
-    let config = config::Config::from_file(&file_config, args.rpc_url)?;
+    let mut config = config::Config::from_file(&file_config, args.rpc_url)?;
     println!("Vote Account: {}", config.vote_account);
     println!("Identity: {}", config.identity);
     println!("RPC: {}\n", mask_api_key(&config.rpc_url));
+
+    if config.doublezero_enabled && config.doublezero_deposit_account.is_none() {
+        if let Some(pda) = doublezero::derive_deposit_account_from_cli(&config.identity) {
+            println!("Derived DoubleZero deposit account: {}", pda);
+            config.doublezero_deposit_account = Some(pda);
+        } else {
+            println!("DoubleZero deposit account not configured; payments will not be categorized.");
+        }
+    }
 
     // Show cache stats
     let stats = cache.stats().await?;
@@ -1376,7 +1386,7 @@ async fn run_report_generation(args: Args, cache: Cache) -> Result<()> {
     }
 
     // Get current epoch to know what's "complete" vs "in progress"
-    let rpc_client = RpcClient::new_with_commitment(config.rpc_url.clone(), CommitmentConfig::confirmed());
+    let rpc_client = rpc::new_rpc_client(&config.rpc_url, CommitmentConfig::confirmed());
     let current_epoch = rpc_client.get_epoch_info()?.epoch;
     println!("Current epoch: {}\n", current_epoch);
 
@@ -1423,6 +1433,10 @@ async fn run_report_generation(args: Args, cache: Cache) -> Result<()> {
         categorized.sfdp_reimbursements.len()
     );
     println!("  MEV deposits: {} transfers", categorized.mev_deposits.len());
+    println!(
+        "  DoubleZero payments: {} transfers",
+        categorized.doublezero_payments.len()
+    );
     println!("  Vote fee funding: {} transfers", categorized.vote_funding.len());
     println!("  Withdrawals: {} transfers", categorized.withdrawals.len());
     println!("  Other: {} transfers\n", categorized.other.len());
@@ -1490,6 +1504,26 @@ async fn run_report_generation(args: Args, cache: Cache) -> Result<()> {
         leader_fees.len(),
         total_leader_fees
     );
+
+    // Step 5.5: Compute DoubleZero fees (block reward sharing)
+    let doublezero_fees = if config.doublezero_enabled {
+        println!("Computing DoubleZero fees...");
+        let fees = doublezero::compute_fees(&config, &leader_fees, start_epoch, end_epoch, current_epoch);
+        if !fees.is_empty() {
+            let total = doublezero::total_doublezero_fees_sol(&fees);
+            println!(
+                "  Found {} DoubleZero fee epochs totaling {:.6} SOL\n",
+                fees.len(),
+                total
+            );
+            cache.store_doublezero_fees(&fees).await?;
+        } else {
+            println!("  No DoubleZero fees found\n");
+        }
+        fees
+    } else {
+        Vec::new()
+    };
 
     // Step 6: Load vote costs from cache, auto-estimate missing epochs
     println!("Loading vote costs...");
@@ -1609,6 +1643,7 @@ async fn run_report_generation(args: Args, cache: Cache) -> Result<()> {
         mev_claims: &mev_claims,
         bam_claims: &bam_claims,
         leader_fees: &leader_fees,
+        doublezero_fees: &doublezero_fees,
         vote_costs: &vote_costs,
         expenses: &all_expenses,
         prices: &price_cache,

@@ -109,6 +109,9 @@ fn MetricsContent(data: MetricsData) -> impl IntoView {
                         "JITO-BAM ✓"
                     </span>
                 })}
+                <span class="inline-block px-2 py-0.5 text-sm border border-[var(--rule)] bg-[var(--paper)]">
+                    "DOUBLEZERO ✓"
+                </span>
             </div>
 
             // Stake & Commission

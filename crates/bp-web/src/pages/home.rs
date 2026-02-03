@@ -26,6 +26,9 @@ pub fn HomePage() -> impl IntoView {
                 <div>
                     <strong>"NETWORK"</strong> "   mainnet-beta"
                 </div>
+                <div>
+                    <strong>"ROUTING"</strong> "   DoubleZero enabled"
+                </div>
             </div>
 
             // About

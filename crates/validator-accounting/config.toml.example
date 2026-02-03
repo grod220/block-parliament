@@ -72,6 +72,28 @@ jitosol_rate = 1.0
 # Only actually claimed rewards are recorded (unclaimed eligibility is skipped).
 
 # =============================================================================
+# DoubleZero Fee Configuration
+# =============================================================================
+[doublezero]
+# Enable DoubleZero fee tracking (block reward sharing)
+# Default: true if section present
+enabled = true
+
+# Fee rate (5% = 0.05)
+# Default: 0.05
+fee_rate = 0.05
+
+# First epoch with DoubleZero fees
+# Default: 859
+first_epoch = 859
+
+# DoubleZero deposit account PDA (optional)
+# Used to categorize DoubleZero payments in the treasury ledger.
+# If omitted, the app will still track fee accruals. When the
+# doublezero-solana CLI is available, the PDA can be derived automatically.
+deposit_account = "YourDoubleZeroDepositPDAHere"
+
+# =============================================================================
 # Optional Integrations
 # =============================================================================
 [notion]

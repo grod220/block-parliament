@@ -8,6 +8,7 @@ use std::path::Path;
 use crate::bam::BamClaim;
 use crate::config::Config;
 use crate::constants;
+use crate::doublezero::DoubleZeroFee;
 use crate::expenses::{Expense, ExpenseCategory};
 use crate::jito::MevClaim;
 use crate::leader_fees::EpochLeaderFees;
@@ -22,6 +23,7 @@ pub struct ReportData<'a> {
     pub mev_claims: &'a [MevClaim],
     pub bam_claims: &'a [BamClaim],
     pub leader_fees: &'a [EpochLeaderFees],
+    pub doublezero_fees: &'a [DoubleZeroFee],
     pub vote_costs: &'a [EpochVoteCost],
     pub expenses: &'a [Expense],
     pub prices: &'a PriceCache,
@@ -39,7 +41,14 @@ pub fn generate_all_reports(output_dir: &Path, data: &ReportData, year_filter: O
         data.leader_fees,
         data.prices,
     )?;
-    generate_expense_ledger(output_dir, data.expenses, data.vote_costs, data.prices, data.config)?;
+    generate_expense_ledger(
+        output_dir,
+        data.expenses,
+        data.vote_costs,
+        data.doublezero_fees,
+        data.prices,
+        data.config,
+    )?;
     generate_treasury_ledger(output_dir, data.categorized, data.prices)?;
     generate_summary(output_dir, data, year_filter)?;
 
@@ -215,6 +224,7 @@ fn generate_expense_ledger(
     output_dir: &Path,
     expenses: &[Expense],
     vote_costs: &[EpochVoteCost],
+    doublezero_fees: &[DoubleZeroFee],
     prices: &PriceCache,
     config: &Config,
 ) -> Result<()> {
@@ -259,6 +269,33 @@ fn generate_expense_ledger(
             "SOL",
             &format!("{:.0}%", coverage * 100.0),
             &format!("{:.2}", net_usd),
+            "",
+        ])?;
+    }
+
+    // DoubleZero fees (block reward sharing)
+    for fee in doublezero_fees {
+        let date = fee.date.as_deref().unwrap_or("unknown");
+        let price = get_price(prices, date);
+        let usd_value = fee.liability_sol * price;
+        let fee_base_sol = fee.fee_base_lamports as f64 / 1e9;
+        let rate_percent = fee.fee_rate_bps as f64 / 100.0;
+        let status = if fee.is_estimate { "estimated" } else { "final" };
+
+        wtr.write_record([
+            date,
+            &fee.epoch.to_string(),
+            "DoubleZero",
+            "Network Fees",
+            &format!(
+                "Block reward sharing (base {:.4} SOL, {:.2}% {})",
+                fee_base_sol, rate_percent, status
+            ),
+            &format!("{:.6}", fee.liability_sol),
+            &format!("{:.2}", usd_value),
+            "SOL",
+            "",
+            &format!("{:.2}", usd_value),
             "",
         ])?;
     }
@@ -343,6 +380,26 @@ fn generate_treasury_ledger(output_dir: &Path, categorized: &CategorizedTransfer
             &format!("{:.2}", usd_value),
             &transfer.signature[..16],
             "Vote account funding",
+        ])?;
+    }
+
+    // DoubleZero payments (prepaid network fees)
+    for transfer in &categorized.doublezero_payments {
+        let date = transfer.date.as_deref().unwrap_or("unknown");
+        let price = get_price(prices, date);
+        let usd_value = transfer.amount_sol * price;
+
+        wtr.write_record([
+            date,
+            "Prepayment",
+            &transfer.from.to_string(),
+            &transfer.from_label,
+            &transfer.to.to_string(),
+            &transfer.to_label,
+            &format!("{:.6}", transfer.amount_sol),
+            &format!("{:.2}", usd_value),
+            &transfer.signature[..16],
+            "DoubleZero deposit (prepaid fees)",
         ])?;
     }
 
@@ -490,6 +547,28 @@ fn generate_summary(output_dir: &Path, data: &ReportData, year_filter: Option<i3
         }
     }
 
+    // DoubleZero fees by month
+    for fee in data.doublezero_fees {
+        if let Some(date) = &fee.date {
+            let month = &date[..7];
+            let price = get_price(data.prices, date);
+            let entry = monthly.entry(month.to_string()).or_default();
+            entry.doublezero_sol += fee.liability_sol;
+            entry.doublezero_usd += fee.liability_sol * price;
+        }
+    }
+
+    // DoubleZero payments by month (prepayments to deposit PDA)
+    for payment in &data.categorized.doublezero_payments {
+        if let Some(date) = &payment.date {
+            let month = &date[..7];
+            let price = get_price(data.prices, date);
+            let entry = monthly.entry(month.to_string()).or_default();
+            entry.doublezero_paid_sol += payment.amount_sol;
+            entry.doublezero_paid_usd += payment.amount_sol * price;
+        }
+    }
+
     // Expenses by month
     for expense in data.expenses {
         if let Ok(date) = chrono::NaiveDate::parse_from_str(&expense.date, "%Y-%m-%d") {
@@ -515,6 +594,12 @@ fn generate_summary(output_dir: &Path, data: &ReportData, year_filter: Option<i3
         "Vote_Costs_Gross_USD",
         "SFDP_Offset_USD",
         "Vote_Costs_Net_USD",
+        "DoubleZero_Fees_SOL",
+        "DoubleZero_Fees_USD",
+        "DoubleZero_Paid_SOL",
+        "DoubleZero_Paid_USD",
+        "DoubleZero_Outstanding_SOL",
+        "DoubleZero_Outstanding_USD",
         "Other_Expenses_USD",
         "Total_Expenses_USD",
         "Net_Profit_USD",
@@ -542,7 +627,7 @@ fn generate_summary(output_dir: &Path, data: &ReportData, year_filter: Option<i3
         let data = &monthly[month];
         // SFDP is expense offset, not revenue. BAM rewards are revenue.
         let total_revenue = data.commission_usd + data.leader_fees_usd + data.mev_usd + data.bam_usd;
-        let total_expenses = data.vote_costs_net_usd + data.other_expenses_usd;
+        let total_expenses = data.vote_costs_net_usd + data.doublezero_usd + data.other_expenses_usd;
         let net_profit = total_revenue - total_expenses;
 
         // Reset YTD at year boundary
@@ -567,9 +652,16 @@ fn generate_summary(output_dir: &Path, data: &ReportData, year_filter: Option<i3
         annual.vote_costs_sol += data.vote_costs_sol;
         annual.vote_costs_gross_usd += data.vote_costs_gross_usd;
         annual.vote_costs_net_usd += data.vote_costs_net_usd;
+        annual.doublezero_sol += data.doublezero_sol;
+        annual.doublezero_usd += data.doublezero_usd;
+        annual.doublezero_paid_sol += data.doublezero_paid_sol;
+        annual.doublezero_paid_usd += data.doublezero_paid_usd;
         annual.other_expenses_usd += data.other_expenses_usd;
 
         let sfdp_offset = data.vote_costs_gross_usd - data.vote_costs_net_usd;
+        let dz_outstanding_sol = data.doublezero_sol - data.doublezero_paid_sol;
+        let dz_outstanding_usd = data.doublezero_usd - data.doublezero_paid_usd;
+
         wtr.write_record([
             month,
             &format!("{:.4}", data.commission_sol),
@@ -585,6 +677,12 @@ fn generate_summary(output_dir: &Path, data: &ReportData, year_filter: Option<i3
             &format!("{:.2}", data.vote_costs_gross_usd),
             &format!("{:.2}", sfdp_offset),
             &format!("{:.2}", data.vote_costs_net_usd),
+            &format!("{:.4}", data.doublezero_sol),
+            &format!("{:.2}", data.doublezero_usd),
+            &format!("{:.4}", data.doublezero_paid_sol),
+            &format!("{:.2}", data.doublezero_paid_usd),
+            &format!("{:.4}", dz_outstanding_sol),
+            &format!("{:.2}", dz_outstanding_usd),
             &format!("{:.2}", data.other_expenses_usd),
             &format!("{:.2}", total_expenses),
             &format!("{:.2}", net_profit),
@@ -600,10 +698,13 @@ fn generate_summary(output_dir: &Path, data: &ReportData, year_filter: Option<i3
         let data = &annual_totals[year];
         // SFDP is expense offset, not revenue. BAM rewards are revenue.
         let total_revenue = data.commission_usd + data.leader_fees_usd + data.mev_usd + data.bam_usd;
-        let total_expenses = data.vote_costs_net_usd + data.other_expenses_usd;
+        let total_expenses = data.vote_costs_net_usd + data.doublezero_usd + data.other_expenses_usd;
         let net_profit = total_revenue - total_expenses;
 
         let sfdp_offset = data.vote_costs_gross_usd - data.vote_costs_net_usd;
+        let dz_outstanding_sol = data.doublezero_sol - data.doublezero_paid_sol;
+        let dz_outstanding_usd = data.doublezero_usd - data.doublezero_paid_usd;
+
         wtr.write_record([
             &format!("{} TOTAL", year),
             &format!("{:.4}", data.commission_sol),
@@ -619,6 +720,12 @@ fn generate_summary(output_dir: &Path, data: &ReportData, year_filter: Option<i3
             &format!("{:.2}", data.vote_costs_gross_usd),
             &format!("{:.2}", sfdp_offset),
             &format!("{:.2}", data.vote_costs_net_usd),
+            &format!("{:.4}", data.doublezero_sol),
+            &format!("{:.2}", data.doublezero_usd),
+            &format!("{:.4}", data.doublezero_paid_sol),
+            &format!("{:.2}", data.doublezero_paid_usd),
+            &format!("{:.4}", dz_outstanding_sol),
+            &format!("{:.2}", dz_outstanding_usd),
             &format!("{:.2}", data.other_expenses_usd),
             &format!("{:.2}", total_expenses),
             &format!("{:.2}", net_profit),
@@ -647,6 +754,10 @@ struct MonthlyData {
     vote_costs_sol: f64,
     vote_costs_gross_usd: f64,
     vote_costs_net_usd: f64,
+    doublezero_sol: f64,
+    doublezero_usd: f64,
+    doublezero_paid_sol: f64,
+    doublezero_paid_usd: f64,
     other_expenses_usd: f64,
 }
 
@@ -805,6 +916,42 @@ pub fn print_summary(data: &ReportData, year_filter: Option<i32>) {
         total_vote_costs_net_usd += net_usd;
     }
 
+    // DoubleZero fees
+    let total_doublezero_sol: f64 = data
+        .doublezero_fees
+        .iter()
+        .filter(|f| f.date.as_deref().map(&matches_year).unwrap_or(false))
+        .map(|f| f.liability_sol)
+        .sum();
+    let total_doublezero_usd: f64 = data
+        .doublezero_fees
+        .iter()
+        .filter(|f| f.date.as_deref().map(&matches_year).unwrap_or(false))
+        .map(|f| {
+            let price = get_price(data.prices, f.date.as_deref().unwrap_or(constants::FALLBACK_DATE));
+            f.liability_sol * price
+        })
+        .sum();
+    let total_doublezero_paid_sol: f64 = data
+        .categorized
+        .doublezero_payments
+        .iter()
+        .filter(|t| t.date.as_deref().map(&matches_year).unwrap_or(false))
+        .map(|t| t.amount_sol)
+        .sum();
+    let total_doublezero_paid_usd: f64 = data
+        .categorized
+        .doublezero_payments
+        .iter()
+        .filter(|t| t.date.as_deref().map(&matches_year).unwrap_or(false))
+        .map(|t| {
+            let price = get_price(data.prices, t.date.as_deref().unwrap_or(constants::FALLBACK_DATE));
+            t.amount_sol * price
+        })
+        .sum();
+    let total_doublezero_outstanding_sol = total_doublezero_sol - total_doublezero_paid_sol;
+    let total_doublezero_outstanding_usd = total_doublezero_usd - total_doublezero_paid_usd;
+
     // Other expenses (hosting, contractors, etc.)
     let total_other_expenses: f64 = data
         .expenses
@@ -827,7 +974,7 @@ pub fn print_summary(data: &ReportData, year_filter: Option<i32>) {
 
     // SFDP is an expense offset, not revenue. BAM rewards are revenue.
     let total_revenue_usd = total_commission_usd + total_leader_fees_usd + total_mev_usd + total_bam_usd;
-    let total_expenses_usd = total_vote_costs_net_usd + total_other_expenses;
+    let total_expenses_usd = total_vote_costs_net_usd + total_doublezero_usd + total_other_expenses;
     let net_profit = total_revenue_usd - total_expenses_usd;
 
     // Normalize values to avoid displaying -0.0
@@ -839,6 +986,12 @@ pub fn print_summary(data: &ReportData, year_filter: Option<i32>) {
     let total_mev_usd = normalize_zero(total_mev_usd);
     let total_bam_sol = normalize_zero(total_bam_sol);
     let total_bam_usd = normalize_zero(total_bam_usd);
+    let total_doublezero_sol = normalize_zero(total_doublezero_sol);
+    let total_doublezero_usd = normalize_zero(total_doublezero_usd);
+    let total_doublezero_paid_sol = normalize_zero(total_doublezero_paid_sol);
+    let total_doublezero_paid_usd = normalize_zero(total_doublezero_paid_usd);
+    let total_doublezero_outstanding_sol = normalize_zero(total_doublezero_outstanding_sol);
+    let total_doublezero_outstanding_usd = normalize_zero(total_doublezero_outstanding_usd);
     let total_seeding_sol = normalize_zero(total_seeding_sol);
 
     println!("REVENUE:");
@@ -877,6 +1030,22 @@ pub fn print_summary(data: &ReportData, year_filter: Option<i32>) {
         total_vote_costs_gross_usd - total_vote_costs_net_usd
     );
     println!("  Vote Fees (net):                ${:>10.2}", total_vote_costs_net_usd);
+    if total_doublezero_sol > 0.0 {
+        println!(
+            "  DoubleZero Fees:    {:>10.4} SOL  ${:>10.2}",
+            total_doublezero_sol, total_doublezero_usd
+        );
+        if total_doublezero_paid_sol > 0.0 || total_doublezero_outstanding_sol.abs() > 0.000001 {
+            println!(
+                "  DoubleZero Paid:    {:>10.4} SOL  ${:>10.2}",
+                total_doublezero_paid_sol, total_doublezero_paid_usd
+            );
+            println!(
+                "  DoubleZero O/S:     {:>10.4} SOL  ${:>10.2}",
+                total_doublezero_outstanding_sol, total_doublezero_outstanding_usd
+            );
+        }
+    }
     println!("  Hosting:                        ${:>10.2}", hosting_expenses);
     println!("  Contractor:                     ${:>10.2}", contractor_expenses);
     println!("  ─────────────────────────────────────────────");

@@ -4,7 +4,6 @@ use anyhow::Result;
 use chrono::DateTime;
 use serde::Serialize;
 use solana_client::rpc_client::GetConfirmedSignaturesForAddress2Config;
-use solana_client::rpc_client::RpcClient;
 use solana_client::rpc_config::RpcTransactionConfig;
 use solana_commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
@@ -17,6 +16,7 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 use crate::addresses::{self, AddressCategory};
+use crate::rpc;
 use crate::config::Config;
 use crate::constants;
 
@@ -95,6 +95,8 @@ pub struct CategorizedTransfers {
     pub sfdp_reimbursements: Vec<SolTransfer>,
     /// Jito MEV deposits
     pub mev_deposits: Vec<SolTransfer>,
+    /// DoubleZero deposit payments (prepaid network fees)
+    pub doublezero_payments: Vec<SolTransfer>,
     /// Internal transfers to fund vote account
     pub vote_funding: Vec<SolTransfer>,
     /// Withdrawals to exchanges or personal
@@ -124,7 +126,7 @@ async fn fetch_inflation_rewards_internal(
     end_epoch: Option<u64>,
     suppress_errors: bool,
 ) -> Result<Vec<EpochReward>> {
-    let client = RpcClient::new_with_commitment(config.rpc_url.clone(), CommitmentConfig::confirmed());
+    let client = rpc::new_rpc_client(&config.rpc_url, CommitmentConfig::confirmed());
 
     // Get current epoch if end not specified
     let current_epoch = client.get_epoch_info()?.epoch;
@@ -169,7 +171,7 @@ async fn fetch_inflation_rewards_internal(
 /// Fetch all SOL transfers involving our accounts
 /// Note: Limited to last 200 transactions per account to avoid RPC timeouts
 pub async fn fetch_sol_transfers(config: &Config, verbose: bool) -> Result<Vec<SolTransfer>> {
-    let client = RpcClient::new_with_commitment(config.rpc_url.clone(), CommitmentConfig::confirmed());
+    let client = rpc::new_rpc_client(&config.rpc_url, CommitmentConfig::confirmed());
 
     let mut all_transfers = Vec::new();
 
@@ -342,7 +344,7 @@ pub async fn fetch_transfers_for_account(
     stop_at_slot: Option<u64>,
     verbose: bool,
 ) -> Result<FetchTransfersResult> {
-    let client = RpcClient::new_with_commitment(config.rpc_url.clone(), CommitmentConfig::confirmed());
+    let client = rpc::new_rpc_client(&config.rpc_url, CommitmentConfig::confirmed());
 
     println!(
         "    Fetching transactions for {} ({})...",
@@ -638,6 +640,15 @@ pub fn categorize_transfers(transfers: &[SolTransfer], config: &Config) -> Categ
     let mut categorized = CategorizedTransfers::default();
 
     for transfer in transfers {
+        if let Some(deposit) = config.doublezero_deposit_account {
+            if transfer.to == deposit && config.is_our_account(&transfer.from) {
+                let mut labeled = transfer.clone();
+                labeled.to_label = "DoubleZero Deposit".to_string();
+                categorized.doublezero_payments.push(labeled);
+                continue;
+            }
+        }
+
         // Check if this is incoming to our accounts
         let is_incoming = config.is_our_account(&transfer.to);
         let is_outgoing = config.is_our_account(&transfer.from);

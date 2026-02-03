@@ -10,6 +10,7 @@ use std::path::Path;
 
 use crate::addresses::AddressCategory;
 use crate::bam::BamClaim;
+use crate::doublezero::DoubleZeroFee;
 use crate::expenses::{Expense, ExpenseCategory, RecurringExpense};
 use crate::jito::MevClaim;
 use crate::leader_fees::EpochLeaderFees;
@@ -67,6 +68,20 @@ struct VoteCostRow {
     total_fee_sol: f64,
     source: String,
     date: Option<String>,
+}
+
+/// Row type for DoubleZero fees query
+#[derive(FromRow)]
+#[allow(dead_code)]
+struct DoubleZeroFeeRow {
+    epoch: i64,
+    fee_base_lamports: i64,
+    liability_lamports: i64,
+    liability_sol: f64,
+    fee_rate_bps: i64,
+    date: Option<String>,
+    source: String,
+    is_estimate: i64,
 }
 
 /// Row type for BAM claims query
@@ -240,6 +255,25 @@ impl Cache {
                 total_fee_sol REAL NOT NULL,
                 source TEXT NOT NULL,
                 date TEXT,
+                fetched_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            ",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "
+            -- DoubleZero fees per epoch (liability accruals)
+            CREATE TABLE IF NOT EXISTS doublezero_fees (
+                epoch INTEGER PRIMARY KEY,
+                fee_base_lamports INTEGER NOT NULL,
+                liability_lamports INTEGER NOT NULL,
+                liability_sol REAL NOT NULL,
+                fee_rate_bps INTEGER NOT NULL,
+                date TEXT,
+                source TEXT NOT NULL,
+                is_estimate INTEGER NOT NULL DEFAULT 0,
                 fetched_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
             ",
@@ -761,6 +795,71 @@ impl Cache {
     }
 
     // =========================================================================
+    // DoubleZero Fees
+    // =========================================================================
+
+    /// Get cached DoubleZero fees
+    #[allow(dead_code)]
+    pub async fn get_doublezero_fees(&self, start_epoch: u64, end_epoch: u64) -> Result<Vec<DoubleZeroFee>> {
+        let rows: Vec<DoubleZeroFeeRow> = sqlx::query_as(
+            "SELECT epoch, fee_base_lamports, liability_lamports, liability_sol,
+                    fee_rate_bps, date, source, is_estimate
+             FROM doublezero_fees
+             WHERE epoch >= ? AND epoch <= ?
+             ORDER BY epoch",
+        )
+        .bind(start_epoch as i64)
+        .bind(end_epoch as i64)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| DoubleZeroFee {
+                epoch: r.epoch as u64,
+                fee_base_lamports: r.fee_base_lamports as u64,
+                liability_lamports: r.liability_lamports as u64,
+                liability_sol: r.liability_sol,
+                fee_rate_bps: r.fee_rate_bps as u64,
+                date: r.date,
+                source: r.source,
+                is_estimate: r.is_estimate != 0,
+            })
+            .collect())
+    }
+
+    /// Store DoubleZero fees (in a transaction for atomicity)
+    pub async fn store_doublezero_fees(&self, fees: &[DoubleZeroFee]) -> Result<()> {
+        if fees.is_empty() {
+            return Ok(());
+        }
+
+        let mut tx = self.pool.begin().await?;
+
+        for fee in fees {
+            sqlx::query(
+                "INSERT OR REPLACE INTO doublezero_fees
+                 (epoch, fee_base_lamports, liability_lamports, liability_sol,
+                  fee_rate_bps, date, source, is_estimate)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(fee.epoch as i64)
+            .bind(fee.fee_base_lamports as i64)
+            .bind(fee.liability_lamports as i64)
+            .bind(fee.liability_sol)
+            .bind(fee.fee_rate_bps as i64)
+            .bind(&fee.date)
+            .bind(&fee.source)
+            .bind(if fee.is_estimate { 1i64 } else { 0i64 })
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
+        Ok(())
+    }
+
+    // =========================================================================
     // Prices
     // =========================================================================
 
@@ -1203,7 +1302,16 @@ impl Cache {
             .fetch_one(&self.pool)
             .await?;
 
-        Ok(vote_costs.0.unwrap_or(0).max(0) as u64)
+        let doublezero: (Option<i64>,) = sqlx::query_as("SELECT SUM(liability_lamports) FROM doublezero_fees")
+            .fetch_one(&self.pool)
+            .await
+            .unwrap_or((None,));
+
+        Ok(vote_costs
+            .0
+            .unwrap_or(0)
+            .saturating_add(doublezero.0.unwrap_or(0))
+            .max(0) as u64)
     }
 
     /// Get total lifetime withdrawals in lamports
@@ -1358,6 +1466,10 @@ impl Cache {
             .fetch_one(&self.pool)
             .await
             .unwrap_or((0,));
+        let doublezero_fees: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM doublezero_fees")
+            .fetch_one(&self.pool)
+            .await
+            .unwrap_or((0,));
         let vote_costs: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM vote_costs")
             .fetch_one(&self.pool)
             .await?;
@@ -1381,6 +1493,7 @@ impl Cache {
             leader_fees: leader_fees.0 as u64,
             mev_claims: mev_claims.0 as u64,
             bam_claims: bam_claims.0 as u64,
+            doublezero_fees: doublezero_fees.0 as u64,
             vote_costs: vote_costs.0 as u64,
             prices: prices.0 as u64,
             expenses: expenses.0 as u64,
@@ -1456,6 +1569,7 @@ pub struct CacheStats {
     pub leader_fees: u64,
     pub mev_claims: u64,
     pub bam_claims: u64,
+    pub doublezero_fees: u64,
     pub vote_costs: u64,
     pub prices: u64,
     pub expenses: u64,
@@ -1467,11 +1581,12 @@ impl std::fmt::Display for CacheStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} rewards, {} leader fees, {} MEV claims, {} BAM claims, {} vote costs, {} transfers, {} prices, {} expenses, {} recurring",
+            "{} rewards, {} leader fees, {} MEV claims, {} BAM claims, {} DoubleZero fees, {} vote costs, {} transfers, {} prices, {} expenses, {} recurring",
             self.epoch_rewards,
             self.leader_fees,
             self.mev_claims,
             self.bam_claims,
+            self.doublezero_fees,
             self.vote_costs,
             self.transfers,
             self.prices,

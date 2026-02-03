@@ -72,6 +72,16 @@ pub const BAM_BOOST_PROGRAM: &str = "BoostxbPp2ENYHGcTLYt1obpcY13HE4NojdqNWdzqSS
 pub const BAM_FIRST_EPOCH: u64 = 912;
 
 // =============================================================================
+// DoubleZero Network Fees
+// =============================================================================
+
+/// DoubleZero fee rate (5% of leader fees)
+pub const DOUBLEZERO_FEE_RATE: f64 = 0.05;
+
+/// First epoch where DoubleZero fees apply (epoch 859, 2025-10-04 04:00 ET)
+pub const DOUBLEZERO_FIRST_EPOCH: u64 = 859;
+
+// =============================================================================
 // Account Sizes (for rent-exempt calculations)
 // =============================================================================
 

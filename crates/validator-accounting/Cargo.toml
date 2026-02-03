@@ -10,6 +10,7 @@ workspace = true
 [dependencies]
 # Solana
 solana-client.workspace = true
+solana-rpc-client.workspace = true
 solana-sdk.workspace = true
 solana-transaction-status.workspace = true
 solana-commitment-config.workspace = true
@@ -27,6 +28,7 @@ tokio.workspace = true
 
 # HTTP client for price API
 reqwest.workspace = true
+reqwest_012 = { package = "reqwest", version = "0.12.28" }
 
 # Serialization
 serde.workspace = true

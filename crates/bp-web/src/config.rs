@@ -73,6 +73,10 @@ pub static CONFIG: Config = Config {
     // Changelog entries - newest first
     changelog: &[
         ChangelogEntry {
+            date: "2026-02-03",
+            event: "Enabled DoubleZero support",
+        },
+        ChangelogEntry {
             date: "2026-01-27",
             event: "Added delegate / liquid stake page",
         },
