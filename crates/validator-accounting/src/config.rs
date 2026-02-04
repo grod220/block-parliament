@@ -194,14 +194,19 @@ impl Config {
             match &file_config.doublezero {
                 Some(dz) => {
                     let deposit = match dz.deposit_account.as_deref() {
-                        Some(addr) => Some(
-                            Pubkey::from_str(addr).with_context(|| "Invalid doublezero.deposit_account address")?,
-                        ),
+                        Some(addr) => {
+                            Some(Pubkey::from_str(addr).with_context(|| "Invalid doublezero.deposit_account address")?)
+                        }
                         None => None,
                     };
                     (dz.enabled, dz.fee_rate, dz.first_epoch, deposit)
                 }
-                None => (false, constants::DOUBLEZERO_FEE_RATE, constants::DOUBLEZERO_FIRST_EPOCH, None),
+                None => (
+                    false,
+                    constants::DOUBLEZERO_FEE_RATE,
+                    constants::DOUBLEZERO_FIRST_EPOCH,
+                    None,
+                ),
             };
 
         Ok(Self {

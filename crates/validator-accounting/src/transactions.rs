@@ -16,9 +16,9 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 use crate::addresses::{self, AddressCategory};
-use crate::rpc;
 use crate::config::Config;
 use crate::constants;
+use crate::rpc;
 
 /// Extract account keys from transaction (works for both legacy and versioned)
 fn extract_account_keys(tx: &EncodedTransaction, _debug: bool) -> Option<Vec<Pubkey>> {

@@ -17,4 +17,3 @@ pub fn new_rpc_client(url: &str, commitment: CommitmentConfig) -> RpcClient {
     let sender = HttpSender::new_with_client(url.to_string(), client);
     RpcClient::new_sender(sender, RpcClientConfig::with_commitment(commitment))
 }
-
