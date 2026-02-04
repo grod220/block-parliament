@@ -640,13 +640,14 @@ pub fn categorize_transfers(transfers: &[SolTransfer], config: &Config) -> Categ
     let mut categorized = CategorizedTransfers::default();
 
     for transfer in transfers {
-        if let Some(deposit) = config.doublezero_deposit_account {
-            if transfer.to == deposit && config.is_our_account(&transfer.from) {
-                let mut labeled = transfer.clone();
-                labeled.to_label = "DoubleZero Deposit".to_string();
-                categorized.doublezero_payments.push(labeled);
-                continue;
-            }
+        if let Some(deposit) = config.doublezero_deposit_account
+            && transfer.to == deposit
+            && config.is_our_account(&transfer.from)
+        {
+            let mut labeled = transfer.clone();
+            labeled.to_label = "DoubleZero Deposit".to_string();
+            categorized.doublezero_payments.push(labeled);
+            continue;
         }
 
         // Check if this is incoming to our accounts

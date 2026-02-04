@@ -89,12 +89,32 @@ pub fn total_doublezero_fees_sol(fees: &[DoubleZeroFee]) -> f64 {
     fees.iter().map(|f| f.liability_sol).sum()
 }
 
+/// Infer the Solana cluster from the RPC URL.
+pub fn infer_cluster_from_rpc_url(rpc_url: &str) -> &'static str {
+    let lower = rpc_url.to_lowercase();
+    if lower.contains("devnet") {
+        "devnet"
+    } else if lower.contains("testnet") {
+        "testnet"
+    } else if lower.contains("localnet") || lower.contains("localhost") || lower.contains("127.0.0.1") {
+        "localnet"
+    } else {
+        "mainnet-beta"
+    }
+}
+
 /// Best-effort derivation of the validator deposit PDA using the DoubleZero CLI.
 ///
 /// This avoids requiring a hardcoded deposit account when the CLI is available.
-pub fn derive_deposit_account_from_cli(node_id: &Pubkey) -> Option<Pubkey> {
+pub fn derive_deposit_account_from_cli(node_id: &Pubkey, rpc_url: &str) -> Option<Pubkey> {
+    let cluster = infer_cluster_from_rpc_url(rpc_url);
+    if cluster == "localnet" {
+        eprintln!("DoubleZero deposit PDA derivation skipped on localnet.");
+        return None;
+    }
+
     let node = node_id.to_string();
-    let output = Command::new("doublezero-solana")
+    let output = match Command::new("doublezero-solana")
         .args([
             "revenue-distribution",
             "fetch",
@@ -102,14 +122,30 @@ pub fn derive_deposit_account_from_cli(node_id: &Pubkey) -> Option<Pubkey> {
             "--node-id",
             &node,
             "-u",
-            "mainnet-beta",
+            cluster,
         ])
         .output()
-        .ok()?;
+    {
+        Ok(output) => output,
+        Err(err) => {
+            eprintln!(
+                "DoubleZero deposit PDA derivation failed to run doublezero-solana: {}",
+                err
+            );
+            return None;
+        }
+    };
 
     let mut text = String::new();
     text.push_str(&String::from_utf8_lossy(&output.stdout));
     text.push_str(&String::from_utf8_lossy(&output.stderr));
+    if text.trim().is_empty() {
+        eprintln!(
+            "DoubleZero deposit PDA derivation returned no output (cluster: {}).",
+            cluster
+        );
+        return None;
+    }
 
     // Common error format: "No deposit account found at <PDA>."
     if let Some(idx) = text.find("at ") {
@@ -133,5 +169,10 @@ pub fn derive_deposit_account_from_cli(node_id: &Pubkey) -> Option<Pubkey> {
         }
     }
 
+    eprintln!(
+        "DoubleZero deposit PDA derivation could not parse CLI output (cluster: {}). \
+Set doublezero.deposit_account in config.toml to enable payment categorization.",
+        cluster
+    );
     None
 }

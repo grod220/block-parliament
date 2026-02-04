@@ -519,6 +519,9 @@ fn generate_summary(output_dir: &Path, data: &ReportData, year_filter: Option<i3
     // Leader fees from block production
     for fees in data.leader_fees {
         if let Some(date) = &fees.date {
+            if date.len() < 7 {
+                continue;
+            }
             let month = &date[..7];
             let price = get_price(data.prices, date);
             let entry = monthly.entry(month.to_string()).or_default();
@@ -530,6 +533,9 @@ fn generate_summary(output_dir: &Path, data: &ReportData, year_filter: Option<i3
     // Vote costs by month (with SFDP coverage calculation)
     for cost in data.vote_costs {
         if let Some(date) = &cost.date {
+            if date.len() < 7 {
+                continue;
+            }
             let month = &date[..7];
             let price = get_price(data.prices, date);
             let gross_usd = cost.total_fee_sol * price;
@@ -550,6 +556,9 @@ fn generate_summary(output_dir: &Path, data: &ReportData, year_filter: Option<i3
     // DoubleZero fees by month
     for fee in data.doublezero_fees {
         if let Some(date) = &fee.date {
+            if date.len() < 7 {
+                continue;
+            }
             let month = &date[..7];
             let price = get_price(data.prices, date);
             let entry = monthly.entry(month.to_string()).or_default();
@@ -561,6 +570,9 @@ fn generate_summary(output_dir: &Path, data: &ReportData, year_filter: Option<i3
     // DoubleZero payments by month (prepayments to deposit PDA)
     for payment in &data.categorized.doublezero_payments {
         if let Some(date) = &payment.date {
+            if date.len() < 7 {
+                continue;
+            }
             let month = &date[..7];
             let price = get_price(data.prices, date);
             let entry = monthly.entry(month.to_string()).or_default();
@@ -991,7 +1003,7 @@ pub fn print_summary(data: &ReportData, year_filter: Option<i32>) {
     let total_doublezero_paid_sol = normalize_zero(total_doublezero_paid_sol);
     let total_doublezero_paid_usd = normalize_zero(total_doublezero_paid_usd);
     let total_doublezero_outstanding_sol = normalize_zero(total_doublezero_outstanding_sol);
-    let total_doublezero_outstanding_usd = normalize_zero(total_doublezero_outstanding_usd);
+    let _total_doublezero_outstanding_usd = normalize_zero(total_doublezero_outstanding_usd);
     let total_seeding_sol = normalize_zero(total_seeding_sol);
 
     println!("REVENUE:");
@@ -1030,7 +1042,10 @@ pub fn print_summary(data: &ReportData, year_filter: Option<i32>) {
         total_vote_costs_gross_usd - total_vote_costs_net_usd
     );
     println!("  Vote Fees (net):                ${:>10.2}", total_vote_costs_net_usd);
-    if total_doublezero_sol > 0.0 {
+    let show_doublezero = total_doublezero_sol > 0.0
+        || total_doublezero_paid_sol > 0.0
+        || total_doublezero_outstanding_sol.abs() > 0.000001;
+    if show_doublezero {
         println!(
             "  DoubleZero Fees:    {:>10.4} SOL  ${:>10.2}",
             total_doublezero_sol, total_doublezero_usd
@@ -1039,10 +1054,6 @@ pub fn print_summary(data: &ReportData, year_filter: Option<i32>) {
             println!(
                 "  DoubleZero Paid:    {:>10.4} SOL  ${:>10.2}",
                 total_doublezero_paid_sol, total_doublezero_paid_usd
-            );
-            println!(
-                "  DoubleZero O/S:     {:>10.4} SOL  ${:>10.2}",
-                total_doublezero_outstanding_sol, total_doublezero_outstanding_usd
             );
         }
     }

@@ -276,6 +276,10 @@ mod tests {
             bam_enabled: true,
             bam_first_epoch: 912,
             bam_jitosol_rate: 1.0, // Default rate
+            doublezero_enabled: false,
+            doublezero_fee_rate: 0.05,
+            doublezero_first_epoch: 859,
+            doublezero_deposit_account: None,
         }
     }
 

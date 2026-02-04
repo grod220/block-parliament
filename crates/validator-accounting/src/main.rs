@@ -1371,7 +1371,7 @@ async fn run_report_generation(args: Args, cache: Cache) -> Result<()> {
     println!("RPC: {}\n", mask_api_key(&config.rpc_url));
 
     if config.doublezero_enabled && config.doublezero_deposit_account.is_none() {
-        if let Some(pda) = doublezero::derive_deposit_account_from_cli(&config.identity) {
+        if let Some(pda) = doublezero::derive_deposit_account_from_cli(&config.identity, &config.rpc_url) {
             println!("Derived DoubleZero deposit account: {}", pda);
             config.doublezero_deposit_account = Some(pda);
         } else {
