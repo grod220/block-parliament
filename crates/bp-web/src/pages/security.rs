@@ -10,23 +10,17 @@ pub fn SecurityPage() -> impl IntoView {
     let twitter_url3 = twitter_url.clone();
 
     view! {
-        <main class="max-w-[80ch] mx-auto px-4 py-8 md:py-12">
-            // Header
-            <header class="mb-8">
-                <div class="text-center">
-                    <h1 class="text-xl font-bold mb-2">
-                        "┌─────────────────────────────────────────┐"
-                        <br />
-                        "│ " {CONFIG.name} " Security Policy │"
-                        <br />
-                        "└─────────────────────────────────────────┘"
-                    </h1>
-                    <div class="text-[var(--ink-light)]">
-                        "Last updated: January 2026"
-                    </div>
+        <main class="max-w-[80ch] mx-auto px-4 py-4 md:py-8">
+            // Header - responsive, matches Section-style pattern
+            <header class="mb-8 text-center">
+                <h1 class="text-xl font-bold mb-2">
+                    "\u{2500}\u{2524} " {CONFIG.name} " Security Policy \u{251C}\u{2500}"
+                </h1>
+                <div class="text-[var(--ink-light)]">
+                    "Last updated: January 2026"
                 </div>
-                <div class="mt-4 text-center">
-                    <a href="/" class="text-sm">"← back to home"</a>
+                <div class="mt-2">
+                    <a href="/" class="text-sm">"\u{2190} back to home"</a>
                 </div>
             </header>
 
@@ -93,10 +87,10 @@ pub fn SecurityPage() -> impl IntoView {
                     <div>
                         <strong>"Network Security"</strong>
                         <ul class="mt-1 list-none space-y-1">
-                            <li>"• Strict firewall rules: only necessary ports exposed (Solana gossip/turbine/repair, SSH, metrics exporter)"</li>
-                            <li>"• SSH access via public-key authentication only (password auth disabled)"</li>
-                            <li>"• fail2ban active with aggressive settings (5 attempts → 12hr ban)"</li>
-                            <li>"• DDoS mitigation provided at the data center level"</li>
+                            <li>"\u{2022} Strict firewall rules: only necessary ports exposed (Solana gossip/turbine/repair, SSH, metrics exporter)"</li>
+                            <li>"\u{2022} SSH access via public-key authentication only (password auth disabled)"</li>
+                            <li>"\u{2022} fail2ban active with aggressive settings (5 attempts \u{2192} 12hr ban)"</li>
+                            <li>"\u{2022} DDoS mitigation provided at the data center level"</li>
                         </ul>
                     </div>
                 </div>
@@ -114,9 +108,9 @@ pub fn SecurityPage() -> impl IntoView {
                     <div>
                         <strong>"User Isolation"</strong>
                         <ul class="mt-1 list-none space-y-1">
-                            <li>"• Administrator account (" <code>"ubuntu"</code> ") separate from validator process account (" <code>"sol"</code> ")"</li>
-                            <li>"• SSH root login disabled"</li>
-                            <li>"• Validator user cannot sudo or access admin functions"</li>
+                            <li>"\u{2022} Administrator account (" <code>"ubuntu"</code> ") separate from validator process account (" <code>"sol"</code> ")"</li>
+                            <li>"\u{2022} SSH root login disabled"</li>
+                            <li>"\u{2022} Validator user cannot sudo or access admin functions"</li>
                         </ul>
                     </div>
                 </div>
@@ -131,9 +125,9 @@ pub fn SecurityPage() -> impl IntoView {
                             "A dedicated watchtower service monitors validator health from an independent location (separate from the validator itself). Alerts are sent via Telegram for:"
                         </p>
                         <ul class="mt-1 list-none space-y-1">
-                            <li>"• Validator delinquency (not voting)"</li>
-                            <li>"• Health check failures"</li>
-                            <li>"• Vote account issues"</li>
+                            <li>"\u{2022} Validator delinquency (not voting)"</li>
+                            <li>"\u{2022} Health check failures"</li>
+                            <li>"\u{2022} Vote account issues"</li>
                         </ul>
                     </div>
                     <div>
@@ -167,10 +161,10 @@ pub fn SecurityPage() -> impl IntoView {
                     <div>
                         <strong>"Update Process"</strong>
                         <ul class="mt-1 list-none space-y-1">
-                            <li>"• New releases tracked via Solana Tech Discord"</li>
-                            <li>"• Updates tested on testnet validator before mainnet"</li>
-                            <li>"• Tower file backed up before any upgrade (prevents consensus issues)"</li>
-                            <li>"• OS security patches applied regularly"</li>
+                            <li>"\u{2022} New releases tracked via Solana Tech Discord"</li>
+                            <li>"\u{2022} Updates tested on testnet validator before mainnet"</li>
+                            <li>"\u{2022} Tower file backed up before any upgrade (prevents consensus issues)"</li>
+                            <li>"\u{2022} OS security patches applied regularly"</li>
                         </ul>
                     </div>
                     <div>
@@ -186,16 +180,16 @@ pub fn SecurityPage() -> impl IntoView {
             <Section id="mev" title="MEV & Jito Integration">
                 <div class="space-y-3">
                     <p>
-                        "Block Parliament runs Jito MEV infrastructure. MEV tips are distributed automatically by Jito's on-chain programs—the validator receives its configured commission, and Jito distributes the remainder to stakers."
+                        "Block Parliament runs Jito MEV infrastructure. MEV tips are distributed automatically by Jito's on-chain programs\u{2014}the validator receives its configured commission, and Jito distributes the remainder to stakers."
                     </p>
                     <div>
                         <strong>"Configuration"</strong>
                         <ul class="mt-1 list-none space-y-1">
-                            <li>"• Block Engine: Frankfurt (eu-frankfurt)"</li>
-                            <li>"• Tip programs: Official Jito mainnet contracts"</li>
+                            <li>"\u{2022} Block Engine: Frankfurt (eu-frankfurt)"</li>
+                            <li>"\u{2022} Tip programs: Official Jito mainnet contracts"</li>
                             <li>
-                                "• Current commission rates: "
-                                <a href=CONFIG.links.solscan target="_blank" rel="noopener noreferrer">"view on Solscan ↗"</a>
+                                "\u{2022} Current commission rates: "
+                                <a href=CONFIG.links.solscan target="_blank" rel="noopener noreferrer">"view on Solscan \u{2197}"</a>
                             </li>
                         </ul>
                     </div>
@@ -209,11 +203,11 @@ pub fn SecurityPage() -> impl IntoView {
                         "In the event of a security incident or validator issue, the operator follows these procedures:"
                     </p>
                     <ul class="list-none space-y-1">
-                        <li><strong>"1. Detection"</strong> " — Automated alerts or manual observation"</li>
-                        <li><strong>"2. Assessment"</strong> " — Determine scope and severity"</li>
-                        <li><strong>"3. Containment"</strong> " — Isolate affected systems if needed"</li>
-                        <li><strong>"4. Resolution"</strong> " — Apply fixes, restore service"</li>
-                        <li><strong>"5. Review"</strong> " — Document lessons learned, improve processes"</li>
+                        <li><strong>"1. Detection"</strong> " \u{2014} Automated alerts or manual observation"</li>
+                        <li><strong>"2. Assessment"</strong> " \u{2014} Determine scope and severity"</li>
+                        <li><strong>"3. Containment"</strong> " \u{2014} Isolate affected systems if needed"</li>
+                        <li><strong>"4. Resolution"</strong> " \u{2014} Apply fixes, restore service"</li>
+                        <li><strong>"5. Review"</strong> " \u{2014} Document lessons learned, improve processes"</li>
                     </ul>
                     <p class="mt-3">
                         "For issues affecting delegators, updates will be posted via "
@@ -230,17 +224,17 @@ pub fn SecurityPage() -> impl IntoView {
                 <p>"All claims on this page can be verified independently:"</p>
                 <ul class="mt-2 list-none space-y-1">
                     <li>
-                        "• "
-                        <a href=CONFIG.links.solscan target="_blank" rel="noopener noreferrer">"Vote account on Solscan ↗"</a>
-                        " — commission, authority keys"
+                        "\u{2022} "
+                        <a href=CONFIG.links.solscan target="_blank" rel="noopener noreferrer">"Vote account on Solscan \u{2197}"</a>
+                        " \u{2014} commission, authority keys"
                     </li>
                     <li>
-                        "• "
-                        <a href=CONFIG.links.stakewiz target="_blank" rel="noopener noreferrer">"Performance on Stakewiz ↗"</a>
-                        " — uptime, skip rate, APY"
+                        "\u{2022} "
+                        <a href=CONFIG.links.stakewiz target="_blank" rel="noopener noreferrer">"Performance on Stakewiz \u{2197}"</a>
+                        " \u{2014} uptime, skip rate, APY"
                     </li>
                     <li>
-                        "• Withdraw authority: "
+                        "\u{2022} Withdraw authority: "
                         <code class="text-sm bg-[var(--rule)] px-1">{CONFIG.withdraw_authority}</code>
                     </li>
                 </ul>
@@ -265,8 +259,8 @@ pub fn SecurityPage() -> impl IntoView {
             </Section>
 
             // Footer
-            <footer class="mt-12 pt-4 border-t border-dashed border-[var(--rule)] text-center text-[var(--ink-light)] text-sm">
-                <a href="/">"← back to home"</a>
+            <footer class="mt-8 pt-4 border-t border-dashed border-[var(--rule)] text-center text-[var(--ink-light)] text-sm">
+                <a href="/">"\u{2190} back to home"</a>
             </footer>
         </main>
     }

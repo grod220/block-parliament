@@ -42,15 +42,43 @@ pub async fn fetch_metrics() -> Result<Option<MetricsData>, ServerFnError> {
     }))
 }
 
+/// Skeleton loading state for metrics
+#[component]
+fn MetricsSkeleton() -> impl IntoView {
+    view! {
+        <div class="space-y-4">
+            // Hero APY skeleton
+            <div class="border border-dashed border-[var(--rule)] p-4 text-center">
+                <div class="skeleton-line">"TOTAL APY"</div>
+                <div class="skeleton-line text-2xl font-bold">"\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}"</div>
+                <div class="skeleton-line text-sm">"\u{2591}\u{2591}\u{2591}\u{2591} staking + \u{2591}\u{2591}\u{2591}\u{2591} mev"</div>
+            </div>
+            // Grouped boxes skeleton
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div class="border border-dashed border-[var(--rule)] p-3">
+                    <div class="skeleton-line font-bold mb-2">"PERFORMANCE"</div>
+                    <div class="skeleton-line">"\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}"</div>
+                    <div class="skeleton-line">"\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}"</div>
+                    <div class="skeleton-line">"\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}"</div>
+                </div>
+                <div class="border border-dashed border-[var(--rule)] p-3">
+                    <div class="skeleton-line font-bold mb-2">"STAKE"</div>
+                    <div class="skeleton-line">"\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}"</div>
+                    <div class="skeleton-line">"\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}"</div>
+                    <div class="skeleton-line">"\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}"</div>
+                </div>
+            </div>
+        </div>
+    }
+}
+
 /// Metrics component - displays validator stats
 #[component]
 pub fn Metrics() -> impl IntoView {
     let metrics = Resource::new(|| (), |_| fetch_metrics());
 
     view! {
-        <Suspense fallback=move || view! {
-            <div class="text-[var(--ink-light)]">"Loading metrics..."</div>
-        }>
+        <Suspense fallback=move || view! { <MetricsSkeleton /> }>
             {move || {
                 metrics.get().map(|result| {
                     match result {
@@ -72,7 +100,7 @@ pub fn Metrics() -> impl IntoView {
 #[component]
 fn MetricsContent(data: MetricsData) -> impl IntoView {
     let v = data.validator.clone();
-    let status_icon = if v.delinquent { "✗" } else { "✓" };
+    let status_icon = if v.delinquent { "\u{2717}" } else { "\u{2713}" };
     let status_text = if v.delinquent { "DELINQUENT" } else { "ACTIVE" };
 
     let version = v.version.clone();
@@ -89,69 +117,67 @@ fn MetricsContent(data: MetricsData) -> impl IntoView {
 
     view! {
         <div class="space-y-4">
-            // Status Line
-            <div>
-                <strong>{status_icon} " " {status_text}</strong>
-                " · v" {version}
-                " · rank #" {v.rank}
-                " · wiz " {format!("{:.0}", v.wiz_score)} "/100"
-            </div>
-
-            // Badges / Trust Indicators
-            <div class="flex flex-wrap gap-2">
-                {has_sfdp.then(|| view! {
-                    <span class="inline-block px-2 py-0.5 text-sm border border-[var(--rule)] bg-[var(--paper)]">
-                        "SFDP ✓"
-                    </span>
-                })}
-                {is_jito.then(|| view! {
-                    <span class="inline-block px-2 py-0.5 text-sm border border-[var(--rule)] bg-[var(--paper)]">
-                        "JITO-BAM ✓"
-                    </span>
-                })}
-                <span class="inline-block px-2 py-0.5 text-sm border border-[var(--rule)] bg-[var(--paper)]">
-                    "DOUBLEZERO ✓"
-                </span>
-            </div>
-
-            // Stake & Commission
-            <div>
-                <strong>"STAKE"</strong> " " {format_stake(v.activated_stake)} " SOL"
-                <br />
-                <strong>"COMMISSION"</strong> " " {v.commission} "%"
-                <br />
-                <strong>"JITO MEV FEE"</strong> " " {format!("{:.1}", v.jito_commission_bps as f64 / 100.0)} "%"
-            </div>
-
-            // Performance
-            <div>
-                <strong>"VOTE SUCCESS"</strong> " " {format_percent(v.vote_success, 2)}
-                <br />
-                <strong>"SKIP RATE"</strong> " " {format_percent(v.skip_rate, 2)}
-                <br />
-                <strong>"UPTIME"</strong> " " {format_percent(v.uptime, 1)}
-                <br />
-                <strong>"CREDIT RATIO"</strong> " " {format_percent(v.credit_ratio, 2)}
-            </div>
-
-            // Network Comparison
-            {network_comp.map(|nc| view! {
-                <div class="text-[var(--ink-light)]">
-                    <strong class="text-[var(--ink)]">"VS NETWORK"</strong>
-                    " (" {nc.total_validators} " validators)"
-                    <br />
-                    "Skip rate: top " {nc.skip_rate_percentile} "%"
-                    " · Stake: top " {nc.stake_percentile} "%"
+            // Hero APY - the number delegators care about most
+            <div class="border border-dashed border-[var(--rule)] p-4 text-center">
+                <div class="text-[var(--ink-light)] text-sm">"TOTAL APY"</div>
+                <div class="text-2xl font-bold">{format_percent(v.total_apy, 2)}</div>
+                <div class="text-sm text-[var(--ink-light)]">
+                    {format_percent(v.staking_apy, 2)} " staking + "
+                    {format_percent(v.jito_apy, 2)} " mev"
                 </div>
-            })}
+            </div>
 
-            // APY
+            // Status Line + Badges
             <div>
-                <strong>"APY (staking)"</strong> " " {format_percent(v.staking_apy, 2)}
-                <br />
-                <strong>"APY (jito mev)"</strong> " " {format_percent(v.jito_apy, 2)}
-                <br />
-                <strong>"APY (total)"</strong> " " {format_percent(v.total_apy, 2)}
+                <div>
+                    <strong>{status_icon} " " {status_text}</strong>
+                    " \u{00B7} v" {version}
+                    " \u{00B7} rank #" {v.rank}
+                    " \u{00B7} wiz " {format!("{:.0}", v.wiz_score)} "/100"
+                </div>
+                <div class="flex flex-wrap gap-2 mt-2">
+                    {has_sfdp.then(|| view! {
+                        <span class="inline-block px-2 py-0.5 text-sm border border-[var(--rule)] bg-[var(--paper)]">
+                            "SFDP \u{2713}"
+                        </span>
+                    })}
+                    {is_jito.then(|| view! {
+                        <span class="inline-block px-2 py-0.5 text-sm border border-[var(--rule)] bg-[var(--paper)]">
+                            "JITO-BAM \u{2713}"
+                        </span>
+                    })}
+                    <span class="inline-block px-2 py-0.5 text-sm border border-[var(--rule)] bg-[var(--paper)]">
+                        "DOUBLEZERO \u{2713}"
+                    </span>
+                </div>
+            </div>
+
+            // Grouped metric boxes
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                // Performance box
+                <div class="border border-dashed border-[var(--rule)] p-3">
+                    <div class="font-bold mb-2 text-sm">"PERFORMANCE"</div>
+                    <div>"Vote Success  " {format_percent(v.vote_success, 2)}</div>
+                    <div>"Skip Rate     " {format_percent(v.skip_rate, 2)}</div>
+                    <div>"Uptime        " {format_percent(v.uptime, 1)}</div>
+                    <div>"Credit Ratio  " {format_percent(v.credit_ratio, 2)}</div>
+                    {network_comp.map(|nc| view! {
+                        <div class="mt-2 text-sm text-[var(--ink-light)]">
+                            "vs network (" {nc.total_validators} " validators)"
+                            <br />
+                            "skip: top " {nc.skip_rate_percentile} "%"
+                            " \u{00B7} stake: top " {nc.stake_percentile} "%"
+                        </div>
+                    })}
+                </div>
+
+                // Stake & Commission box
+                <div class="border border-dashed border-[var(--rule)] p-3">
+                    <div class="font-bold mb-2 text-sm">"STAKE & FEES"</div>
+                    <div>"Stake         " {format_stake(v.activated_stake)} " SOL"</div>
+                    <div>"Commission    " {v.commission} "%"</div>
+                    <div>"Jito MEV Fee  " {format!("{:.1}", v.jito_commission_bps as f64 / 100.0)} "%"</div>
+                </div>
             </div>
 
             // MEV Rewards History
@@ -187,10 +213,10 @@ fn MetricsContent(data: MetricsData) -> impl IntoView {
             </div>
 
             // Infrastructure
-            <div class="text-[var(--ink-light)]">
-                {ip_city} ", " {ip_country} " · " {ip_org}
+            <div class="text-[var(--ink-light)] text-sm">
+                {ip_city} ", " {ip_country} " \u{00B7} " {ip_org}
                 <br />
-                {client} " · ASN " {asn} " · epoch " {v.epoch}
+                {client} " \u{00B7} ASN " {asn} " \u{00B7} epoch " {v.epoch}
             </div>
         </div>
     }

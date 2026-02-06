@@ -1,7 +1,7 @@
 use crate::config::CONFIG;
 use leptos::prelude::*;
 
-use crate::components::{CopyButton, Section};
+use crate::components::{CopyButton, ExternalLink, Section};
 
 #[component]
 pub fn DelegatePage() -> impl IntoView {
@@ -9,19 +9,13 @@ pub fn DelegatePage() -> impl IntoView {
     let twitter_url2 = twitter_url.clone();
 
     view! {
-        <main class="max-w-[80ch] mx-auto px-4 py-8 md:py-12">
-            // Header
-            <header class="mb-8">
-                <div class="text-center">
-                    <h1 class="text-xl font-bold mb-2">
-                        "\u{250C}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2510}"
-                        <br />
-                        "\u{2502} Delegate to Block Parliament        \u{2502}"
-                        <br />
-                        "\u{2514}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2518}"
-                    </h1>
-                </div>
-                <div class="mt-4 text-center">
+        <main class="max-w-[80ch] mx-auto px-4 py-4 md:py-8">
+            // Header - responsive, uses Section-style pattern instead of fixed-width ASCII box
+            <header class="mb-8 text-center">
+                <h1 class="text-xl font-bold mb-2">
+                    "\u{2500}\u{2524} Delegate to Block Parliament \u{251C}\u{2500}"
+                </h1>
+                <div class="mt-2">
                     <a href="/" class="text-sm">"\u{2190} back to home"</a>
                 </div>
             </header>
@@ -35,30 +29,9 @@ pub fn DelegatePage() -> impl IntoView {
                     </div>
                     <div class="flex flex-wrap gap-2">
                         <CopyButton text=CONFIG.vote_account.to_string() label="Copy vote account".to_string() />
-                        <a
-                            href=CONFIG.links.solscan
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            class="px-3 py-1 border border-dashed border-[var(--rule)] hover:bg-[var(--rule)] transition-colors inline-block"
-                        >
-                            "Open in Solscan \u{2197}"
-                        </a>
-                        <a
-                            href=CONFIG.links.stakewiz
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            class="px-3 py-1 border border-dashed border-[var(--rule)] hover:bg-[var(--rule)] transition-colors inline-block"
-                        >
-                            "View on StakeWiz \u{2197}"
-                        </a>
-                        <a
-                            href=CONFIG.links.validators_app
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            class="px-3 py-1 border border-dashed border-[var(--rule)] hover:bg-[var(--rule)] transition-colors inline-block"
-                        >
-                            "validators.app \u{2197}"
-                        </a>
+                        <ExternalLink href=CONFIG.links.solscan.to_string() label="Open in Solscan".to_string() />
+                        <ExternalLink href=CONFIG.links.stakewiz.to_string() label="View on StakeWiz".to_string() />
+                        <ExternalLink href=CONFIG.links.validators_app.to_string() label="validators.app".to_string() />
                     </div>
                 </div>
             </Section>
@@ -131,25 +104,11 @@ pub fn DelegatePage() -> impl IntoView {
                                         </ol>
                                     </div>
                                     <div class="flex flex-wrap gap-2">
-                                        <a
-                                            href=url
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            class="px-3 py-1 border border-dashed border-[var(--rule)] hover:bg-[var(--rule)] transition-colors inline-block"
-                                        >
-                                            "Liquid stake now \u{2197}"
-                                        </a>
+                                        <ExternalLink href=url.to_string() label="Liquid stake now".to_string() />
                                         {CONFIG.lst.mint_address.map(|mint| {
                                             let explorer_url = format!("https://solscan.io/token/{}", mint);
                                             view! {
-                                                <a
-                                                    href=explorer_url
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                    class="px-3 py-1 border border-dashed border-[var(--rule)] hover:bg-[var(--rule)] transition-colors inline-block"
-                                                >
-                                                    "View token on Solscan \u{2197}"
-                                                </a>
+                                                <ExternalLink href=explorer_url label="View token on Solscan".to_string() />
                                             }
                                         })}
                                     </div>
@@ -260,8 +219,8 @@ pub fn DelegatePage() -> impl IntoView {
             </Section>
 
             // Footer
-            <footer class="mt-12 pt-4 border-t border-dashed border-[var(--rule)] text-center text-[var(--ink-light)] text-sm">
-                <a href="/">"← back to home"</a>
+            <footer class="mt-8 pt-4 border-t border-dashed border-[var(--rule)] text-center text-[var(--ink-light)] text-sm">
+                <a href="/">"\u{2190} back to home"</a>
             </footer>
         </main>
     }

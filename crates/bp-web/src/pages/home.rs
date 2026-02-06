@@ -1,14 +1,14 @@
 use crate::config::CONFIG;
 use leptos::prelude::*;
 
-use crate::components::{AnimatedGradientDashBorder, Metrics, Section};
+use crate::components::{AnimatedGradientDashBorder, ExternalLink, Metrics, Section};
 
 #[component]
 pub fn HomePage() -> impl IntoView {
     let title = format!("{} \u{1F989}", CONFIG.name); // owl emoji
 
     view! {
-        <main class="max-w-[80ch] mx-auto px-4 py-8 md:py-12">
+        <main class="max-w-[80ch] mx-auto px-4 py-4 md:py-8">
             // Header with animated border
             <header class="mb-8 text-center">
                 <AnimatedGradientDashBorder title=title />
@@ -75,63 +75,22 @@ pub fn HomePage() -> impl IntoView {
             // External Links
             <Section id="links" title="External Links">
                 <div class="flex flex-wrap gap-2">
-                    <a
-                        href=CONFIG.links.validators_app
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        class="px-3 py-1 border border-dashed border-[var(--rule)] hover:bg-[var(--rule)] transition-colors inline-block"
-                    >
-                        "validators.app \u{2197}"
-                    </a>
-                    <a
-                        href=CONFIG.links.ibrl
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        class="px-3 py-1 border border-dashed border-[var(--rule)] hover:bg-[var(--rule)] transition-colors inline-block"
-                    >
-                        "ibrl \u{2197}"
-                    </a>
-                    <a
-                        href=CONFIG.links.stakewiz
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        class="px-3 py-1 border border-dashed border-[var(--rule)] hover:bg-[var(--rule)] transition-colors inline-block"
-                    >
-                        "stakewiz \u{2197}"
-                    </a>
-                    <a
-                        href=CONFIG.links.sfdp
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        class="px-3 py-1 border border-dashed border-[var(--rule)] hover:bg-[var(--rule)] transition-colors inline-block"
-                    >
-                        "SFDP \u{2197}"
-                    </a>
-                    <a
-                        href=CONFIG.links.jito
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        class="px-3 py-1 border border-dashed border-[var(--rule)] hover:bg-[var(--rule)] transition-colors inline-block"
-                    >
-                        "jito stakenet \u{2197}"
-                    </a>
-                    <a
-                        href=CONFIG.links.solscan
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        class="px-3 py-1 border border-dashed border-[var(--rule)] hover:bg-[var(--rule)] transition-colors inline-block"
-                    >
-                        "solscan \u{2197}"
-                    </a>
+                    <ExternalLink href=CONFIG.links.validators_app.to_string() label="validators.app".to_string() />
+                    <ExternalLink href=CONFIG.links.ibrl.to_string() label="ibrl".to_string() />
+                    <ExternalLink href=CONFIG.links.stakewiz.to_string() label="stakewiz".to_string() />
+                    <ExternalLink href=CONFIG.links.sfdp.to_string() label="SFDP".to_string() />
+                    <ExternalLink href=CONFIG.links.jito.to_string() label="jito stakenet".to_string() />
+                    <ExternalLink href=CONFIG.links.solscan.to_string() label="solscan".to_string() />
                 </div>
             </Section>
 
-            // Changelog
+            // Changelog - timeline style
             <Section id="changelog" title="Changelog">
-                <div>
+                <div class="pl-3 border-l border-dashed border-[var(--ink-light)]">
                     {CONFIG.changelog.iter().map(|entry| view! {
-                        <div>
-                            <strong>{entry.date}</strong> "  " {entry.event}
+                        <div class="mb-1">
+                            <span class="text-[var(--ink-light)]">{entry.date}</span>
+                            "  " {entry.event}
                         </div>
                     }).collect_view()}
                 </div>

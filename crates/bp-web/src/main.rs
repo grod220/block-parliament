@@ -27,7 +27,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             <meta charset="utf-8" />
                             <meta name="viewport" content="width=device-width, initial-scale=1" />
                             <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦉</text></svg>" />
-                            <meta name="theme-color" content="#f8f6f1" />
+                            <meta name="theme-color" content="#f8f6f1" media="(prefers-color-scheme: light)" />
+                            <meta name="theme-color" content="#1a1a1a" media="(prefers-color-scheme: dark)" />
                             <meta name="description" content="Block Parliament - Solana validator operated by an Anza core developer. 5% commission, Jito MEV enabled." />
                             <title>"Block Parliament - Anza Core Dev Validator"</title>
                             <link rel="stylesheet" href="/pkg/bp-web.css" />

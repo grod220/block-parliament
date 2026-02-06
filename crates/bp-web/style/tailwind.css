@@ -12,6 +12,19 @@
   --ink-light: #666;
   --link: #0066cc;
   --rule: #ccc;
+  --skeleton: #ddd;
+}
+
+/* Dark mode */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #1a1a1a;
+    --ink: #e8e6e1;
+    --ink-light: #999;
+    --link: #6db3f2;
+    --rule: #444;
+    --skeleton: #333;
+  }
 }
 
 @layer base {
@@ -112,6 +125,36 @@ a:hover {
 @keyframes ticker-shift {
   from { transform: translateX(0); }
   to { transform: translateX(-64ch); }  /* Shift by full pattern (64 chars) */
+}
+
+/* Skeleton loading animation */
+@keyframes shimmer {
+  0% { opacity: 0.4; }
+  50% { opacity: 0.8; }
+  100% { opacity: 0.4; }
+}
+
+.skeleton-line {
+  color: var(--skeleton);
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+.skeleton-line:nth-child(2) { animation-delay: 0.15s; }
+.skeleton-line:nth-child(3) { animation-delay: 0.3s; }
+.skeleton-line:nth-child(4) { animation-delay: 0.45s; }
+.skeleton-line:nth-child(5) { animation-delay: 0.6s; }
+.skeleton-line:nth-child(6) { animation-delay: 0.75s; }
+
+/* Section anchor hover indicator */
+.section-anchor {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  text-decoration: none !important;
+  color: var(--ink-light) !important;
+}
+
+h2:hover .section-anchor {
+  opacity: 1;
 }
 
 /* Reduced motion */
