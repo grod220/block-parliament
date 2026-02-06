@@ -10,6 +10,7 @@ use std::path::Path;
 
 use crate::addresses::AddressCategory;
 use crate::bam::BamClaim;
+use crate::config::Config;
 use crate::doublezero::DoubleZeroFee;
 use crate::expenses::{Expense, ExpenseCategory, RecurringExpense};
 use crate::jito::MevClaim;
@@ -344,9 +345,17 @@ impl Cache {
         .execute(&self.pool)
         .await?;
 
+        // SOL transfers table:
+        // We store each distinct SOL movement once, keyed by (signature, from, to, amount).
+        // This avoids silently dropping multi-transfer transactions and avoids double-counting
+        // the same transfer fetched from multiple account histories.
+        //
+        // If an older schema exists (with `account_key` as part of the primary key), migrate it.
+        self.maybe_migrate_sol_transfers().await?;
+
         sqlx::query(
             "
-            -- SOL transfers (cached per account to avoid re-fetching)
+            -- SOL transfers (cached)
             CREATE TABLE IF NOT EXISTS sol_transfers (
                 signature TEXT NOT NULL,
                 slot INTEGER NOT NULL,
@@ -360,17 +369,15 @@ impl Cache {
                 to_label TEXT NOT NULL,
                 from_category TEXT NOT NULL,
                 to_category TEXT NOT NULL,
-                account_key TEXT NOT NULL,
                 fetched_at TEXT NOT NULL DEFAULT (datetime('now')),
-                PRIMARY KEY (signature, account_key)
+                PRIMARY KEY (signature, from_address, to_address, amount_lamports)
             )
             ",
         )
         .execute(&self.pool)
         .await?;
 
-        // Index for quick lookups by account
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_transfers_account ON sol_transfers(account_key)")
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_transfers_slot ON sol_transfers(slot)")
             .execute(&self.pool)
             .await?;
 
@@ -452,6 +459,108 @@ impl Cache {
         .await
         .ok(); // Ignore error if partial index not supported
 
+        Ok(())
+    }
+
+    async fn maybe_migrate_sol_transfers(&self) -> Result<()> {
+        // Check if table exists and whether it has the legacy `account_key` column.
+        let table_exists: Option<(String,)> =
+            sqlx::query_as("SELECT name FROM sqlite_master WHERE type='table' AND name='sol_transfers'")
+                .fetch_optional(&self.pool)
+                .await?;
+        if table_exists.is_none() {
+            return Ok(());
+        }
+
+        let columns: Vec<(String,)> = sqlx::query_as("SELECT name FROM pragma_table_info('sol_transfers')")
+            .fetch_all(&self.pool)
+            .await?;
+        let has_account_key = columns.iter().any(|(name,)| name == "account_key");
+        if !has_account_key {
+            return Ok(());
+        }
+
+        eprintln!("Migrating legacy sol_transfers schema (dropping account_key, improving dedupe)...");
+
+        let mut tx = self.pool.begin().await?;
+
+        sqlx::query("DROP TABLE IF EXISTS sol_transfers_new")
+            .execute(&mut *tx)
+            .await?;
+
+        sqlx::query(
+            "
+            CREATE TABLE IF NOT EXISTS sol_transfers_new (
+                signature TEXT NOT NULL,
+                slot INTEGER NOT NULL,
+                timestamp INTEGER,
+                date TEXT,
+                from_address TEXT NOT NULL,
+                to_address TEXT NOT NULL,
+                amount_lamports INTEGER NOT NULL,
+                amount_sol REAL NOT NULL,
+                from_label TEXT NOT NULL,
+                to_label TEXT NOT NULL,
+                from_category TEXT NOT NULL,
+                to_category TEXT NOT NULL,
+                fetched_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (signature, from_address, to_address, amount_lamports)
+            )
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        // Insert one row per distinct transfer key, choosing the max slot/timestamp/date for that key.
+        sqlx::query(
+            "
+            INSERT OR IGNORE INTO sol_transfers_new
+                (signature, slot, timestamp, date, from_address, to_address,
+                 amount_lamports, amount_sol, from_label, to_label,
+                 from_category, to_category, fetched_at)
+            SELECT
+                signature,
+                MAX(slot) as slot,
+                MAX(timestamp) as timestamp,
+                MAX(date) as date,
+                from_address,
+                to_address,
+                amount_lamports,
+                MAX(amount_sol) as amount_sol,
+                MAX(from_label) as from_label,
+                MAX(to_label) as to_label,
+                MAX(from_category) as from_category,
+                MAX(to_category) as to_category,
+                MIN(fetched_at) as fetched_at
+            FROM sol_transfers
+            GROUP BY signature, from_address, to_address, amount_lamports
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query("DROP TABLE sol_transfers").execute(&mut *tx).await?;
+        sqlx::query("ALTER TABLE sol_transfers_new RENAME TO sol_transfers")
+            .execute(&mut *tx)
+            .await?;
+
+        sqlx::query("DROP INDEX IF EXISTS idx_transfers_account")
+            .execute(&mut *tx)
+            .await
+            .ok();
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_transfers_slot ON sol_transfers(slot)")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_transfers_withdrawal
+             ON sol_transfers(to_category)
+             WHERE to_category IN ('Exchange', 'PersonalWallet')",
+        )
+        .execute(&mut *tx)
+        .await
+        .ok();
+
+        tx.commit().await?;
         Ok(())
     }
 
@@ -1091,7 +1200,7 @@ impl Cache {
     /// Get all cached transfers
     pub async fn get_all_transfers(&self) -> Result<Vec<SolTransfer>> {
         let rows: Vec<SolTransferRow> = sqlx::query_as(
-            "SELECT DISTINCT signature, slot, timestamp, date, from_address, to_address,
+            "SELECT signature, slot, timestamp, date, from_address, to_address,
                     amount_lamports, amount_sol, from_label, to_label,
                     from_category, to_category
              FROM sol_transfers
@@ -1100,45 +1209,21 @@ impl Cache {
         .fetch_all(&self.pool)
         .await?;
 
-        // Deduplicate by signature (same transfer may be cached under multiple accounts)
-        let mut seen = std::collections::HashSet::new();
-        Ok(rows
-            .into_iter()
-            .filter_map(|r| {
-                if seen.contains(&r.signature) {
-                    None
-                } else {
-                    seen.insert(r.signature.clone());
-                    row_to_transfer(r)
-                }
-            })
-            .collect())
+        Ok(rows.into_iter().filter_map(row_to_transfer).collect())
     }
 
     /// Get the highest slot we've checked for an account (even if no transfers were found)
     /// This is useful for accounts with only versioned/undecodable transactions
     pub async fn get_account_progress(&self, account_key: &str) -> Result<Option<u64>> {
-        // Check both account_progress table and sol_transfers, use the higher value
+        // We track per-account progress independently of transfer storage.
         let progress_row: Option<(i64,)> =
             sqlx::query_as("SELECT highest_slot FROM account_progress WHERE account_key = ?")
                 .bind(account_key)
                 .fetch_optional(&self.pool)
                 .await?;
 
-        let transfer_row: Option<(i64,)> = sqlx::query_as("SELECT MAX(slot) FROM sol_transfers WHERE account_key = ?")
-            .bind(account_key)
-            .fetch_optional(&self.pool)
-            .await?;
-
         let progress_slot = progress_row.map(|(s,)| s as u64);
-        let transfer_slot = transfer_row.and_then(|(s,)| if s > 0 { Some(s as u64) } else { None });
-
-        Ok(match (progress_slot, transfer_slot) {
-            (Some(p), Some(t)) => Some(p.max(t)),
-            (Some(p), None) => Some(p),
-            (None, Some(t)) => Some(t),
-            (None, None) => None,
-        })
+        Ok(progress_slot)
     }
 
     /// Store the highest slot we've checked for an account
@@ -1151,8 +1236,8 @@ impl Cache {
         Ok(())
     }
 
-    /// Store transfers for a specific account (in a transaction for atomicity)
-    pub async fn store_transfers(&self, transfers: &[SolTransfer], account_key: &str) -> Result<()> {
+    /// Store transfers (in a transaction for atomicity)
+    pub async fn store_transfers(&self, transfers: &[SolTransfer]) -> Result<()> {
         if transfers.is_empty() {
             return Ok(());
         }
@@ -1164,8 +1249,8 @@ impl Cache {
                 "INSERT OR REPLACE INTO sol_transfers
                  (signature, slot, timestamp, date, from_address, to_address,
                   amount_lamports, amount_sol, from_label, to_label,
-                  from_category, to_category, account_key)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  from_category, to_category)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&transfer.signature)
             .bind(transfer.slot as i64)
@@ -1179,7 +1264,6 @@ impl Cache {
             .bind(&transfer.to_label)
             .bind(category_to_string(&transfer.from_category))
             .bind(category_to_string(&transfer.to_category))
-            .bind(account_key)
             .execute(&mut *tx)
             .await?;
         }
@@ -1316,26 +1400,47 @@ impl Cache {
 
     /// Get total lifetime withdrawals in lamports
     /// Includes: transfers to exchanges or personal wallets
-    pub async fn get_total_withdrawals_lamports(&self) -> Result<u64> {
-        let withdrawals: (Option<i64>,) = sqlx::query_as(
-            "SELECT SUM(amount_lamports) FROM sol_transfers
-             WHERE to_category IN ('Exchange', 'PersonalWallet')",
+    pub async fn get_total_withdrawals_lamports(&self, config: &Config) -> Result<u64> {
+        // Avoid relying on stored categories (which may be missing/wrong in older caches).
+        // Compute withdrawals as transfers FROM our validator accounts TO:
+        // - personal wallet
+        // - known exchange addresses
+        let rows: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT to_address, amount_lamports
+             FROM sol_transfers
+             WHERE from_address IN (?, ?, ?)",
         )
-        .fetch_one(&self.pool)
-        .await
-        .unwrap_or((None,));
+        .bind(config.vote_account.to_string())
+        .bind(config.identity.to_string())
+        .bind(config.withdraw_authority.to_string())
+        .fetch_all(&self.pool)
+        .await?;
 
-        Ok(withdrawals.0.unwrap_or(0).max(0) as u64)
+        let mut total: u64 = 0;
+        for (to_str, amount) in rows {
+            let Ok(to) = Pubkey::from_str(&to_str) else {
+                continue;
+            };
+            if to == config.personal_wallet || crate::addresses::is_exchange(&to) {
+                total = total.saturating_add(amount.max(0) as u64);
+            }
+        }
+        Ok(total)
     }
 
     /// Get total lifetime deposits in lamports
     /// Includes: transfers from personal wallet to validator accounts (seeding)
-    pub async fn get_total_deposits_lamports(&self) -> Result<u64> {
+    pub async fn get_total_deposits_lamports(&self, config: &Config) -> Result<u64> {
+        // Compute deposits as transfers FROM the configured personal wallet TO our validator accounts.
         let deposits: (Option<i64>,) = sqlx::query_as(
             "SELECT SUM(amount_lamports) FROM sol_transfers
-             WHERE from_category = 'PersonalWallet'
-             AND to_category = 'ValidatorSelf'",
+             WHERE from_address = ?
+             AND to_address IN (?, ?, ?)",
         )
+        .bind(config.personal_wallet.to_string())
+        .bind(config.vote_account.to_string())
+        .bind(config.identity.to_string())
+        .bind(config.withdraw_authority.to_string())
         .fetch_one(&self.pool)
         .await
         .unwrap_or((None,));
@@ -1344,11 +1449,11 @@ impl Cache {
     }
 
     /// Get all income/expense data for reconciliation
-    pub async fn get_reconciliation_data(&self) -> Result<crate::positions::IncomeData> {
+    pub async fn get_reconciliation_data(&self, config: &Config) -> Result<crate::positions::IncomeData> {
         let total_income = self.get_total_income_lamports().await?;
         let total_expenses = self.get_total_expenses_lamports().await?;
-        let total_withdrawals = self.get_total_withdrawals_lamports().await?;
-        let total_deposits = self.get_total_deposits_lamports().await?;
+        let total_withdrawals = self.get_total_withdrawals_lamports(config).await?;
+        let total_deposits = self.get_total_deposits_lamports(config).await?;
 
         Ok(crate::positions::IncomeData {
             total_income_lamports: total_income,
@@ -1483,7 +1588,7 @@ impl Cache {
             .fetch_one(&self.pool)
             .await
             .unwrap_or((0,));
-        let transfers: (i64,) = sqlx::query_as("SELECT COUNT(DISTINCT signature) FROM sol_transfers")
+        let transfers: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM sol_transfers")
             .fetch_one(&self.pool)
             .await
             .unwrap_or((0,));

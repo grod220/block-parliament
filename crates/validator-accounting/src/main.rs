@@ -878,7 +878,7 @@ async fn handle_dune_command(action: DuneCommand, cache: &Cache, config_path: Op
             }
 
             // Store transfers (use "dune" as the account key to track them)
-            cache.store_transfers(&transfers, "dune").await?;
+            cache.store_transfers(&transfers).await?;
 
             println!("\nImported {} transfers:", transfers.len());
             for transfer in transfers.iter().take(10) {
@@ -942,7 +942,7 @@ async fn handle_dune_command(action: DuneCommand, cache: &Cache, config_path: Op
             println!("--- SOL Transfers ---");
             let transfers = client.fetch_transfers(&since).await?;
             if !transfers.is_empty() {
-                cache.store_transfers(&transfers, "dune").await?;
+                cache.store_transfers(&transfers).await?;
                 println!("  Imported {} transfers\n", transfers.len());
             } else {
                 println!("  No transfers found\n");
@@ -981,7 +981,7 @@ async fn handle_position_command(action: PositionCommand, cache: &Cache, config_
                 positions::discover_stake_accounts(&rpc_client, &config.withdraw_authority, snapshot_slot).await?;
 
             // Fetch actual income/expense data from cache
-            let income_data = cache.get_reconciliation_data().await?;
+            let income_data = cache.get_reconciliation_data(&config).await?;
 
             let position = positions::build_position_snapshot(
                 &balances,
@@ -1098,7 +1098,7 @@ async fn handle_position_command(action: PositionCommand, cache: &Cache, config_
                 positions::discover_stake_accounts(&rpc_client, &config.withdraw_authority, snapshot_slot).await?;
 
             // Fetch actual income/expense data from cache
-            let income_data = cache.get_reconciliation_data().await?;
+            let income_data = cache.get_reconciliation_data(&config).await?;
 
             let position = positions::build_position_snapshot(
                 &balances,
@@ -1319,7 +1319,7 @@ fn prepare_dune_fallback(
                 rpc_failures.len()
             );
             let earliest_epoch = *rpc_failures.iter().min().unwrap();
-            let start_date = transactions::epoch_to_date(earliest_epoch);
+            let start_date = dune_start_date_with_buffer(earliest_epoch, &config.bootstrap_date);
             let client = dune::DuneClient::new(api_key.to_string(), config);
             Some((client, start_date))
         }
@@ -1331,6 +1331,26 @@ fn prepare_dune_fallback(
             None
         }
     }
+}
+
+fn dune_start_date_with_buffer(earliest_epoch: u64, bootstrap_date: &str) -> String {
+    // epoch_to_date() is approximate; include a safety buffer so we don't start too late.
+    const BUFFER_DAYS: i64 = 7;
+
+    let derived = transactions::epoch_to_date(earliest_epoch);
+    let Ok(derived_date) = chrono::NaiveDate::parse_from_str(&derived, "%Y-%m-%d") else {
+        return derived;
+    };
+
+    let buffered = derived_date - chrono::Duration::days(BUFFER_DAYS);
+
+    // Avoid querying far before the validator existed (limits Dune query size).
+    let floored = match chrono::NaiveDate::parse_from_str(bootstrap_date, "%Y-%m-%d") {
+        Ok(boot) => buffered.max(boot),
+        Err(_) => buffered,
+    };
+
+    floored.format("%Y-%m-%d").to_string()
 }
 
 /// Parse expense category from string
@@ -2132,16 +2152,7 @@ async fn fetch_transfers_with_cache(
     if no_cache {
         // Fetch everything fresh
         let transfers = transactions::fetch_sol_transfers(config, verbose).await?;
-
-        // Store by account
-        for (label, account) in transactions::get_tracked_accounts(config) {
-            let account_transfers: Vec<_> = transfers
-                .iter()
-                .filter(|t| t.from == account || t.to == account)
-                .cloned()
-                .collect();
-            cache.store_transfers(&account_transfers, label).await?;
-        }
+        cache.store_transfers(&transfers).await?;
 
         return Ok(transfers);
     }
@@ -2150,9 +2161,26 @@ async fn fetch_transfers_with_cache(
     let cached_transfers = cache.get_all_transfers().await?;
     let cached_count = cached_transfers.len();
 
-    // Track signatures we've seen (for deduplication)
-    let mut seen_signatures: std::collections::HashSet<String> =
-        cached_transfers.iter().map(|t| t.signature.clone()).collect();
+    // Track transfers we've seen (for deduplication across account histories)
+    let mut seen_signatures: std::collections::HashSet<String> = cached_transfers
+        .iter()
+        .map(|t| format!("{}:{}:{}:{}", t.signature, t.from, t.to, t.amount_lamports))
+        .collect();
+
+    // If account progress is missing (older caches), we can still avoid refetching
+    // by stopping at the newest cached slot that touched each tracked account.
+    let mut cached_max_slot_by_account: std::collections::HashMap<solana_sdk::pubkey::Pubkey, u64> =
+        std::collections::HashMap::new();
+    for t in &cached_transfers {
+        cached_max_slot_by_account
+            .entry(t.from)
+            .and_modify(|s| *s = (*s).max(t.slot))
+            .or_insert(t.slot);
+        cached_max_slot_by_account
+            .entry(t.to)
+            .and_modify(|s| *s = (*s).max(t.slot))
+            .or_insert(t.slot);
+    }
 
     let mut all_transfers = cached_transfers;
 
@@ -2162,7 +2190,10 @@ async fn fetch_transfers_with_cache(
 
     for (label, account) in transactions::get_tracked_accounts(config) {
         // Use account progress (tracks highest slot seen, even if no transfers found)
-        let latest_slot = cache.get_account_progress(label).await?;
+        let mut latest_slot = cache.get_account_progress(label).await?;
+        if latest_slot.is_none() {
+            latest_slot = cached_max_slot_by_account.get(&account).copied();
+        }
 
         if verbose {
             println!("    {}: latest cached slot = {:?}", label, latest_slot);
@@ -2182,11 +2213,15 @@ async fn fetch_transfers_with_cache(
                     }
 
                     // Store new transfers
-                    cache.store_transfers(&result.transfers, label).await?;
+                    cache.store_transfers(&result.transfers).await?;
 
                     // Add unique transfers to our collection (deduplicate across accounts)
                     for transfer in result.transfers {
-                        if seen_signatures.insert(transfer.signature.clone()) {
+                        let key = format!(
+                            "{}:{}:{}:{}",
+                            transfer.signature, transfer.from, transfer.to, transfer.amount_lamports
+                        );
+                        if seen_signatures.insert(key) {
                             new_count += 1;
                             all_transfers.push(transfer);
                         }
@@ -2213,14 +2248,18 @@ async fn fetch_transfers_with_cache(
                 // Collect transfers that are actually new (not already seen)
                 let mut dune_new_transfers = Vec::new();
                 for transfer in dune_transfers {
-                    if seen_signatures.insert(transfer.signature.clone()) {
+                    let key = format!(
+                        "{}:{}:{}:{}",
+                        transfer.signature, transfer.from, transfer.to, transfer.amount_lamports
+                    );
+                    if seen_signatures.insert(key) {
                         dune_new_transfers.push(transfer);
                     }
                 }
                 if !dune_new_transfers.is_empty() {
                     println!("    Dune returned {} new transfers", dune_new_transfers.len());
                     // Store the new Dune transfers to cache
-                    cache.store_transfers(&dune_new_transfers, "dune").await?;
+                    cache.store_transfers(&dune_new_transfers).await?;
                     // Add to our collection
                     all_transfers.extend(dune_new_transfers);
                 }

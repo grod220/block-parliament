@@ -80,6 +80,8 @@ pub struct DuneClient {
     identity: String,
     /// Withdraw authority address (for transfer queries)
     withdraw_authority: String,
+    /// Personal wallet address (for transfer queries: seeding/withdrawals)
+    personal_wallet: String,
     /// Commission percentage (for reward records)
     commission_percent: u8,
 }
@@ -97,6 +99,7 @@ impl DuneClient {
             vote_account: config.vote_account.to_string(),
             identity: config.identity.to_string(),
             withdraw_authority: config.withdraw_authority.to_string(),
+            personal_wallet: config.personal_wallet.to_string(),
             commission_percent: config.commission_percent,
         }
     }
@@ -351,6 +354,7 @@ impl DuneClient {
         Self::validate_address(&self.identity)?;
         Self::validate_address(&self.withdraw_authority)?;
         Self::validate_address(&self.vote_account)?;
+        Self::validate_address(&self.personal_wallet)?;
         println!("  Querying Dune for SOL transfers...");
 
         // Build the account list from config
@@ -358,6 +362,7 @@ impl DuneClient {
             self.identity.as_str(),
             self.withdraw_authority.as_str(),
             self.vote_account.as_str(),
+            self.personal_wallet.as_str(),
         ];
         let account_list = accounts
             .iter()
@@ -412,9 +417,8 @@ impl DuneClient {
             let from = Pubkey::from_str(&from_str).unwrap_or_default();
             let to = Pubkey::from_str(&to_str).unwrap_or_default();
 
-            // Label the addresses using the addresses module
-            let from_label_info = get_label(&from);
-            let to_label_info = get_label(&to);
+            let (from_label, from_category) = self.label_and_category(&from);
+            let (to_label, to_category) = self.label_and_category(&to);
 
             transfers.push(SolTransfer {
                 signature,
@@ -425,14 +429,43 @@ impl DuneClient {
                 to,
                 amount_lamports,
                 amount_sol,
-                from_label: from_label_info.name,
-                to_label: to_label_info.name,
-                from_category: from_label_info.category,
-                to_category: to_label_info.category,
+                from_label,
+                to_label,
+                from_category,
+                to_category,
             });
         }
 
         Ok(transfers)
+    }
+
+    fn label_and_category(&self, pubkey: &Pubkey) -> (String, crate::addresses::AddressCategory) {
+        // Ensure categories for our own accounts so reconciliation queries work.
+        let s = pubkey.to_string();
+        if s == self.vote_account {
+            (
+                "Vote Account".to_string(),
+                crate::addresses::AddressCategory::ValidatorSelf,
+            )
+        } else if s == self.identity {
+            (
+                "Identity Account".to_string(),
+                crate::addresses::AddressCategory::ValidatorSelf,
+            )
+        } else if s == self.withdraw_authority {
+            (
+                "Withdraw Authority".to_string(),
+                crate::addresses::AddressCategory::ValidatorSelf,
+            )
+        } else if s == self.personal_wallet {
+            (
+                "Personal Wallet".to_string(),
+                crate::addresses::AddressCategory::PersonalWallet,
+            )
+        } else {
+            let label = get_label(pubkey);
+            (label.name, label.category)
+        }
     }
 }
 

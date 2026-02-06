@@ -3,13 +3,15 @@
 use anyhow::Result;
 use chrono::DateTime;
 use serde::Serialize;
+use serde_json::Value as JsonValue;
 use solana_client::rpc_client::GetConfirmedSignaturesForAddress2Config;
 use solana_client::rpc_config::RpcTransactionConfig;
 use solana_commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Signature;
 use solana_transaction_status::{
-    EncodedConfirmedTransactionWithStatusMeta, EncodedTransaction, UiMessage, UiTransactionEncoding,
+    EncodedConfirmedTransactionWithStatusMeta, EncodedTransaction, UiInstruction, UiMessage, UiParsedInstruction,
+    UiTransactionEncoding, option_serializer::OptionSerializer, parse_instruction::ParsedInstruction,
 };
 use std::str::FromStr;
 use std::time::Duration;
@@ -274,8 +276,14 @@ pub async fn fetch_sol_transfers(config: &Config, verbose: bool) -> Result<Vec<S
                                     all_transfers.extend(transfers);
                                 }
                                 None => {
-                                    // Check if it was a decode failure
-                                    if tx.transaction.transaction.decode().is_none() {
+                                    // Only treat non-JSON encodings as decode failures. For JsonParsed,
+                                    // `EncodedTransaction::decode()` always returns None by design.
+                                    if matches!(
+                                        tx.transaction.transaction,
+                                        EncodedTransaction::Accounts(_)
+                                            | EncodedTransaction::LegacyBinary(_)
+                                            | EncodedTransaction::Binary(_, _)
+                                    ) {
                                         decode_failures += 1;
                                     }
                                 }
@@ -470,7 +478,12 @@ pub async fn fetch_transfers_for_account(
                                 transfers.extend(t);
                             }
                             None => {
-                                if tx.transaction.transaction.decode().is_none() {
+                                if matches!(
+                                    tx.transaction.transaction,
+                                    EncodedTransaction::Accounts(_)
+                                        | EncodedTransaction::LegacyBinary(_)
+                                        | EncodedTransaction::Binary(_, _)
+                                ) {
                                     decode_failures += 1;
                                 }
                             }
@@ -560,6 +573,57 @@ fn parse_sol_transfers_debug(
 
     let mut transfers = Vec::new();
 
+    // Prefer parsing System Program transfer instructions when available.
+    // This is much more accurate than inferring transfers from balance deltas.
+    if let EncodedTransaction::Json(ui_tx) = &tx.transaction.transaction
+        && let UiMessage::Parsed(parsed_msg) = &ui_tx.message
+    {
+        let mut parsed_transfers: Vec<(Pubkey, Pubkey, u64)> = Vec::new();
+
+        parsed_transfers.extend(system_transfers_from_ui_instructions(&parsed_msg.instructions));
+
+        // Inner instructions can contain System transfers too (e.g., via CPI).
+        if let OptionSerializer::Some(inner) = meta.inner_instructions.as_ref() {
+            for inner_ixs in inner {
+                parsed_transfers.extend(system_transfers_from_ui_instructions(&inner_ixs.instructions));
+            }
+        }
+
+        for (from, to, amount_lamports) in parsed_transfers {
+            let min_lamports = constants::MIN_TRANSFER_LAMPORTS.max(0) as u64;
+            if amount_lamports < min_lamports {
+                continue;
+            }
+
+            // Only keep transfers that touch accounts we care about.
+            if !config.is_relevant_account(&from) && !config.is_relevant_account(&to) {
+                continue;
+            }
+
+            let (from_label, from_category) = label_and_category_for_address(&from, config);
+            let (to_label, to_category) = label_and_category_for_address(&to, config);
+
+            transfers.push(SolTransfer {
+                signature: signature.to_string(),
+                slot: tx.slot,
+                timestamp,
+                date: date.clone(),
+                from,
+                to,
+                amount_lamports,
+                amount_sol: amount_lamports as f64 / 1e9,
+                from_label,
+                to_label,
+                from_category,
+                to_category,
+            });
+        }
+
+        if !transfers.is_empty() {
+            return Some(transfers);
+        }
+    }
+
     // Look for significant balance changes (> 0.001 SOL)
     for i in 0..account_keys.len().min(pre_balances.len()).min(post_balances.len()) {
         let pre = pre_balances[i];
@@ -591,48 +655,129 @@ fn parse_sol_transfers_debug(
             continue;
         }
 
-        // Find the counterparty
+        // Infer the counterparty by choosing the opposite-sign account whose magnitude best matches.
+        // If this account is the fee payer, adjust the outflow magnitude by subtracting the tx fee.
+        let fee_payer = account_keys.first().copied();
+        let mut amount = diff.unsigned_abs();
+        if diff < 0 && fee_payer.is_some_and(|p| p == *account) && meta.fee > 0 && amount > meta.fee {
+            // The fee payer's balance delta includes the network fee; exclude it from the transfer amount.
+            amount = amount.saturating_sub(meta.fee);
+        }
+
+        let mut best_j: Option<usize> = None;
+        let mut best_delta: u64 = u64::MAX;
+
         for j in 0..account_keys.len().min(pre_balances.len()).min(post_balances.len()) {
             if i == j {
                 continue;
             }
 
-            let other_pre = pre_balances[j];
-            let other_post = post_balances[j];
-            let other_diff = other_post as i64 - other_pre as i64;
-
-            // Look for matching opposite change
-            if (diff > 0 && other_diff < 0) || (diff < 0 && other_diff > 0) {
-                let (from, to, amount) = if diff > 0 {
-                    (&account_keys[j], account, diff as u64)
-                } else {
-                    (account, &account_keys[j], (-diff) as u64)
-                };
-
-                let from_label = addresses::get_label(from);
-                let to_label = addresses::get_label(to);
-
-                transfers.push(SolTransfer {
-                    signature: signature.to_string(),
-                    slot: tx.slot,
-                    timestamp,
-                    date: date.clone(),
-                    from: *from,
-                    to: *to,
-                    amount_lamports: amount,
-                    amount_sol: amount as f64 / 1e9,
-                    from_label: from_label.name.clone(),
-                    to_label: to_label.name.clone(),
-                    from_category: from_label.category,
-                    to_category: to_label.category,
-                });
-
-                break; // Found the counterparty
+            let other_diff = post_balances[j] as i64 - pre_balances[j] as i64;
+            if !((diff > 0 && other_diff < 0) || (diff < 0 && other_diff > 0)) {
+                continue;
             }
+
+            let other_amount = other_diff.unsigned_abs();
+            let delta = other_amount.abs_diff(amount);
+            if delta < best_delta {
+                best_delta = delta;
+                best_j = Some(j);
+                if delta == 0 {
+                    break;
+                }
+            }
+        }
+
+        if let Some(j) = best_j {
+            let (from, to) = if diff > 0 {
+                (&account_keys[j], account)
+            } else {
+                (account, &account_keys[j])
+            };
+
+            let (from_label, from_category) = label_and_category_for_address(from, config);
+            let (to_label, to_category) = label_and_category_for_address(to, config);
+
+            transfers.push(SolTransfer {
+                signature: signature.to_string(),
+                slot: tx.slot,
+                timestamp,
+                date: date.clone(),
+                from: *from,
+                to: *to,
+                amount_lamports: amount,
+                amount_sol: amount as f64 / 1e9,
+                from_label,
+                to_label,
+                from_category,
+                to_category,
+            });
         }
     }
 
     if transfers.is_empty() { None } else { Some(transfers) }
+}
+
+fn system_transfers_from_ui_instructions(instructions: &[UiInstruction]) -> Vec<(Pubkey, Pubkey, u64)> {
+    let mut transfers = Vec::new();
+    for ix in instructions {
+        if let Some(t) = parse_system_transfer_from_ui_instruction(ix) {
+            transfers.push(t);
+        }
+    }
+    transfers
+}
+
+fn parse_system_transfer_from_ui_instruction(ix: &UiInstruction) -> Option<(Pubkey, Pubkey, u64)> {
+    match ix {
+        UiInstruction::Parsed(UiParsedInstruction::Parsed(pi)) => parse_system_transfer_from_parsed_instruction(pi),
+        _ => None,
+    }
+}
+
+fn parse_system_transfer_from_parsed_instruction(pi: &ParsedInstruction) -> Option<(Pubkey, Pubkey, u64)> {
+    // Accept either the 'program' string or the program id.
+    if pi.program != "system" && pi.program_id != "11111111111111111111111111111111" {
+        return None;
+    }
+
+    let obj = pi.parsed.as_object()?;
+    let info = obj.get("info")?.as_object()?;
+
+    let source = info.get("source")?.as_str()?;
+    let destination = info.get("destination")?.as_str()?;
+
+    // Only support lamports-based transfers.
+    let lamports = json_u64(info.get("lamports")?)?;
+
+    let from = Pubkey::from_str(source).ok()?;
+    let to = Pubkey::from_str(destination).ok()?;
+    Some((from, to, lamports))
+}
+
+fn json_u64(v: &JsonValue) -> Option<u64> {
+    if let Some(n) = v.as_u64() {
+        return Some(n);
+    }
+    if let Some(s) = v.as_str() {
+        return s.parse::<u64>().ok();
+    }
+    None
+}
+
+fn label_and_category_for_address(pubkey: &Pubkey, config: &Config) -> (String, AddressCategory) {
+    if *pubkey == config.vote_account {
+        ("Vote Account".to_string(), AddressCategory::ValidatorSelf)
+    } else if *pubkey == config.identity {
+        ("Identity Account".to_string(), AddressCategory::ValidatorSelf)
+    } else if *pubkey == config.withdraw_authority {
+        ("Withdraw Authority".to_string(), AddressCategory::ValidatorSelf)
+    } else if *pubkey == config.personal_wallet {
+        ("Personal Wallet".to_string(), AddressCategory::PersonalWallet)
+    } else {
+        let label = addresses::get_label(pubkey);
+        (label.name, label.category)
+    }
 }
 
 /// Categorize transfers based on sender/receiver
