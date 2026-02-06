@@ -11,6 +11,7 @@ use std::path::Path;
 use crate::addresses::AddressCategory;
 use crate::bam::BamClaim;
 use crate::config::Config;
+use crate::constants;
 use crate::doublezero::DoubleZeroFee;
 use crate::expenses::{Expense, ExpenseCategory, RecurringExpense};
 use crate::jito::MevClaim;
@@ -1402,42 +1403,84 @@ impl Cache {
     /// Includes: transfers to exchanges or personal wallets
     pub async fn get_total_withdrawals_lamports(&self, config: &Config) -> Result<u64> {
         // Avoid relying on stored categories (which may be missing/wrong in older caches).
-        // Compute withdrawals as transfers FROM our validator accounts TO:
-        // - personal wallet
-        // - known exchange addresses
+        // Treat withdrawals as SOL leaving our validator treasury (vote/identity/withdraw authority)
+        // to external destinations. Exclude known internal routing destinations:
+        // - our core accounts
+        // - our stake accounts
+        // - known DeFi protocol addresses (swap routing, etc.)
+        //
+        // Note: transfers to the personal wallet are counted as withdrawals because the personal
+        // wallet is not part of the validator position snapshot.
+
+        let mut internal: std::collections::HashSet<String> = std::collections::HashSet::new();
+        internal.insert(config.vote_account.to_string());
+        internal.insert(config.identity.to_string());
+        internal.insert(config.withdraw_authority.to_string());
+
+        // Stake accounts are owned by the same withdraw authority and are part of validator assets.
+        // If we classify transfers to stake accounts as withdrawals, reconciliation will be wrong.
+        let stake_rows: Vec<(String,)> = sqlx::query_as("SELECT account FROM stake_accounts")
+            .fetch_all(&self.pool)
+            .await
+            .unwrap_or_default();
+        for (addr,) in stake_rows {
+            internal.insert(addr);
+        }
+
+        // Known DeFi protocols are internal routing destinations for swaps, not true withdrawals.
+        for addr in crate::addresses::get_defi_protocol_addresses() {
+            internal.insert(addr);
+        }
+
+        let from_vote = config.vote_account.to_string();
+        let from_identity = config.identity.to_string();
+        let from_withdraw = config.withdraw_authority.to_string();
+        let personal_wallet = config.personal_wallet.to_string();
+
         let rows: Vec<(String, i64)> = sqlx::query_as(
             "SELECT to_address, amount_lamports
              FROM sol_transfers
              WHERE from_address IN (?, ?, ?)",
         )
-        .bind(config.vote_account.to_string())
-        .bind(config.identity.to_string())
-        .bind(config.withdraw_authority.to_string())
+        .bind(from_vote)
+        .bind(from_identity)
+        .bind(from_withdraw)
         .fetch_all(&self.pool)
         .await?;
 
         let mut total: u64 = 0;
         for (to_str, amount) in rows {
-            let Ok(to) = Pubkey::from_str(&to_str) else {
+            if amount <= 0 {
                 continue;
-            };
-            if to == config.personal_wallet || crate::addresses::is_exchange(&to) {
-                total = total.saturating_add(amount.max(0) as u64);
+            }
+            // Always count transfers to personal wallet as withdrawals.
+            if to_str == personal_wallet {
+                total = total.saturating_add(amount as u64);
+                continue;
+            }
+            // Count if destination is not internal.
+            if !internal.contains(&to_str) {
+                total = total.saturating_add(amount as u64);
             }
         }
+
         Ok(total)
     }
 
     /// Get total lifetime deposits in lamports
-    /// Includes: transfers from personal wallet to validator accounts (seeding)
+    /// Includes:
+    /// - transfers from personal wallet to validator accounts (capital contributions)
+    /// - SFDP reimbursements to validator accounts (vote cost reimbursements)
     pub async fn get_total_deposits_lamports(&self, config: &Config) -> Result<u64> {
-        // Compute deposits as transfers FROM the configured personal wallet TO our validator accounts.
+        // Compute deposits as transfers FROM the configured personal wallet (and the SFDP reimbursement wallet)
+        // TO our validator accounts.
         let deposits: (Option<i64>,) = sqlx::query_as(
             "SELECT SUM(amount_lamports) FROM sol_transfers
-             WHERE from_address = ?
+             WHERE from_address IN (?, ?)
              AND to_address IN (?, ?, ?)",
         )
         .bind(config.personal_wallet.to_string())
+        .bind(constants::SFDP_REIMBURSEMENT)
         .bind(config.vote_account.to_string())
         .bind(config.identity.to_string())
         .bind(config.withdraw_authority.to_string())

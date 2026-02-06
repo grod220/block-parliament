@@ -961,6 +961,7 @@ async fn handle_position_command(action: PositionCommand, cache: &Cache, config_
     let file_config = load_config_file(config_path)?;
     let config = config::Config::from_file(&file_config, None)?;
     let rpc_client = rpc::new_rpc_client(&config.rpc_url, CommitmentConfig::confirmed());
+    let current_epoch = rpc_client.get_epoch_info()?.epoch;
 
     match action {
         PositionCommand::Now => {
@@ -979,6 +980,13 @@ async fn handle_position_command(action: PositionCommand, cache: &Cache, config_
             // Discover stake accounts (using snapshot_slot for consistency tracking)
             let stake_accounts =
                 positions::discover_stake_accounts(&rpc_client, &config.withdraw_authority, snapshot_slot).await?;
+            // Keep stake account list fresh for reconciliation calculations.
+            cache.store_stake_accounts(&stake_accounts).await?;
+
+            // Ensure vote costs exist for reconciliation (at least estimates).
+            // Without this, reconciliation can miss a major on-chain expense driver.
+            let completed_end = current_epoch.saturating_sub(1);
+            ensure_vote_costs_cached(cache, config.first_reward_epoch, completed_end).await?;
 
             // Fetch actual income/expense data from cache
             let income_data = cache.get_reconciliation_data(&config).await?;
@@ -1096,6 +1104,10 @@ async fn handle_position_command(action: PositionCommand, cache: &Cache, config_
             let jitosol_rate = positions::fetch_jitosol_exchange_rate(&rpc_client).await?;
             let stake_accounts =
                 positions::discover_stake_accounts(&rpc_client, &config.withdraw_authority, snapshot_slot).await?;
+            cache.store_stake_accounts(&stake_accounts).await?;
+
+            let completed_end = current_epoch.saturating_sub(1);
+            ensure_vote_costs_cached(cache, config.first_reward_epoch, completed_end).await?;
 
             // Fetch actual income/expense data from cache
             let income_data = cache.get_reconciliation_data(&config).await?;
@@ -1378,6 +1390,28 @@ fn truncate(s: &str, max_len: usize) -> String {
     }
 }
 
+async fn ensure_vote_costs_cached(cache: &Cache, start_epoch: u64, end_epoch: u64) -> Result<()> {
+    if end_epoch < start_epoch {
+        return Ok(());
+    }
+
+    let cached = cache.get_vote_costs(start_epoch, end_epoch).await?;
+    let cached_epochs: std::collections::HashSet<u64> = cached.iter().map(|c| c.epoch).collect();
+
+    let mut missing = Vec::new();
+    for epoch in start_epoch..=end_epoch {
+        if !cached_epochs.contains(&epoch) {
+            missing.push(vote_costs::estimate_vote_cost(epoch));
+        }
+    }
+
+    if !missing.is_empty() {
+        cache.store_vote_costs(&missing).await?;
+    }
+
+    Ok(())
+}
+
 /// Run the main report generation workflow
 async fn run_report_generation(args: Args, cache: Cache) -> Result<()> {
     println!("Block Parliament Validator Financial Tracker");
@@ -1553,15 +1587,23 @@ async fn run_report_generation(args: Args, cache: Cache) -> Result<()> {
     // Find missing epochs and auto-estimate them
     let cached_epochs: std::collections::HashSet<u64> = vote_costs.iter().map(|c| c.epoch).collect();
     let mut estimated_epochs = Vec::new();
+    let mut estimated_costs = Vec::new();
     for epoch in start_epoch..=end_epoch {
         if !cached_epochs.contains(&epoch) {
             let estimate = vote_costs::estimate_vote_cost(epoch);
+            estimated_costs.push(estimate.clone());
             vote_costs.push(estimate);
             estimated_epochs.push(epoch);
         }
     }
     // Sort by epoch after adding estimates
     vote_costs.sort_by_key(|c| c.epoch);
+
+    // Persist estimates so reconciliation works even if the user never ran `vote-costs estimate`.
+    // We only store for epochs that were missing, so we won't overwrite imported data.
+    if !estimated_costs.is_empty() {
+        cache.store_vote_costs(&estimated_costs).await?;
+    }
 
     if vote_costs.is_empty() {
         println!("  No vote costs cached (use 'vote-costs import' or 'vote-costs estimate' to add)\n");
