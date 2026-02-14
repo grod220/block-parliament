@@ -18,6 +18,7 @@ mod positions;
 mod prices;
 mod reports;
 mod rpc;
+mod tax_report;
 mod transactions;
 mod vote_costs;
 
@@ -26,7 +27,7 @@ use chrono::{NaiveDate, Utc};
 use clap::{Parser, Subcommand};
 use solana_commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -176,6 +177,25 @@ enum Command {
     Position {
         #[command(subcommand)]
         action: PositionCommand,
+    },
+
+    /// Generate withdrawal-based tax report
+    Tax {
+        /// Filter to a specific tax year (e.g., 2025)
+        #[arg(long)]
+        year: Option<i32>,
+
+        /// RPC URL (uses private endpoint by default)
+        #[arg(long)]
+        rpc_url: Option<String>,
+
+        /// Force refresh all data (ignore cache)
+        #[arg(long)]
+        no_cache: bool,
+
+        /// Verbose output
+        #[arg(short, long)]
+        verbose: bool,
     },
 }
 
@@ -383,7 +403,7 @@ async fn main() -> Result<()> {
 
     // Handle subcommands
     if let Some(command) = args.command {
-        return handle_command(command, &cache, args.config.as_ref()).await;
+        return handle_command(command, &cache, args.config.as_ref(), &args.output_dir).await;
     }
 
     // No subcommand - run the main report generation
@@ -391,7 +411,7 @@ async fn main() -> Result<()> {
 }
 
 /// Handle expense management subcommands
-async fn handle_command(command: Command, cache: &Cache, config_path: Option<&PathBuf>) -> Result<()> {
+async fn handle_command(command: Command, cache: &Cache, config_path: Option<&PathBuf>, output_dir: &Path) -> Result<()> {
     match command {
         Command::Expense { action } => handle_expense_command(action, cache).await,
         Command::Recurring { action } => handle_recurring_command(action, cache).await,
@@ -399,6 +419,9 @@ async fn handle_command(command: Command, cache: &Cache, config_path: Option<&Pa
         Command::VoteCosts { action } => handle_vote_costs_command(action, cache).await,
         Command::Dune { action } => handle_dune_command(action, cache, config_path).await,
         Command::Position { action } => handle_position_command(action, cache, config_path).await,
+        Command::Tax { year, rpc_url, no_cache, verbose } => {
+            handle_tax_command(cache, config_path, output_dir, year, rpc_url, no_cache, verbose).await
+        }
     }
 }
 
@@ -1663,7 +1686,156 @@ fn dune_fallback_bounds(earliest_epoch: u64, rpc_url: &str, bootstrap_date: &str
     (start_date, min_slot)
 }
 
-/// Parse expense category from string
+/// Handle tax report subcommand
+async fn handle_tax_command(
+    cache: &Cache,
+    config_path: Option<&PathBuf>,
+    output_dir: &Path,
+    year_filter: Option<i32>,
+    rpc_url: Option<String>,
+    no_cache: bool,
+    verbose: bool,
+) -> Result<()> {
+    println!("Block Parliament — Withdrawal-Based Tax Report");
+    println!("===============================================\n");
+
+    // Load config
+    let file_config = load_config_file(config_path)?;
+    let mut config = config::Config::from_file(&file_config, rpc_url)?;
+    println!("Vote Account: {}", config.vote_account);
+    println!("Identity: {}", config.identity);
+    println!("RPC: {}\n", mask_api_key(&config.rpc_url));
+
+    if config.doublezero_enabled && config.doublezero_deposit_account.is_none() {
+        if let Some(pda) = doublezero::derive_deposit_account_from_cli(&config.identity, &config.rpc_url) {
+            config.doublezero_deposit_account = Some(pda);
+        }
+    }
+
+    // Get current epoch
+    let rpc_client = rpc::new_rpc_client(&config.rpc_url, CommitmentConfig::confirmed());
+    let current_epoch = rpc_client.get_epoch_info()?.epoch;
+    let start_epoch = config.first_reward_epoch;
+    let end_epoch = current_epoch.saturating_sub(1); // exclude in-progress epoch
+
+    let dune_api_key = file_config.api_keys.dune.as_deref();
+
+    // Fetch transfers (to find withdrawals)
+    println!("Loading transaction history...");
+    let transfers = fetch_transfers_with_cache(
+        cache, &config, no_cache, verbose, dune_api_key, &config.bootstrap_date,
+    ).await?;
+    println!("  Found {} SOL transfers", transfers.len());
+
+    let categorized = transactions::categorize_transfers(&transfers, &config);
+    let outgoing_other_count = categorized.other.iter()
+        .filter(|t| config.is_our_account(&t.from) && !config.is_our_account(&t.to))
+        .count();
+    println!("  {} external withdrawal(s) identified ({} to known exchanges, {} to other addresses)\n",
+        categorized.withdrawals.len() + outgoing_other_count,
+        categorized.withdrawals.len(),
+        outgoing_other_count,
+    );
+
+    // Fetch leader fees (needed for DoubleZero computation)
+    println!("Loading leader fees...");
+    let leader_fees = fetch_leader_fees_with_cache(
+        cache, &config, start_epoch, end_epoch, current_epoch, no_cache, dune_api_key,
+    ).await.unwrap_or_else(|e| {
+        eprintln!("  Warning: Failed to fetch leader fees: {}. DoubleZero expenses may be incomplete.", e);
+        Vec::new()
+    });
+
+    // DoubleZero fees
+    let doublezero_fees = if config.doublezero_enabled {
+        let fees = doublezero::compute_fees(&config, &leader_fees, start_epoch, end_epoch, current_epoch);
+        if !fees.is_empty() {
+            cache.store_doublezero_fees(&fees).await?;
+        }
+        fees
+    } else {
+        Vec::new()
+    };
+
+    // Vote costs
+    println!("Loading vote costs...");
+    ensure_vote_costs_cached(cache, start_epoch, end_epoch).await?;
+    let vote_costs = cache.get_vote_costs(start_epoch, end_epoch).await?;
+    println!("  {} epoch(s) of vote costs\n", vote_costs.len());
+
+    // Off-chain expenses
+    println!("Loading expenses...");
+    let mut all_expenses = cache.get_expenses().await?;
+
+    // Expand recurring expenses
+    let recurring = cache.get_recurring_expenses().await?;
+    if !recurring.is_empty() {
+        // Use epoch date range for expansion window (covers full operating period)
+        let epoch_start_date = transactions::epoch_to_date(start_epoch);
+        let epoch_end_date = transactions::epoch_to_date(end_epoch);
+        let start_month = month_key_from_date(&epoch_start_date)
+            .or_else(|| {
+                recurring.iter()
+                    .filter_map(|r| month_key_from_date(&r.start_date))
+                    .min()
+            });
+        let end_month = month_key_from_date(&epoch_end_date)
+            .or_else(|| {
+                let current_month = Utc::now().date_naive().format("%Y-%m").to_string();
+                recurring.iter()
+                    .filter_map(|r| r.end_date.as_deref().and_then(month_key_from_date))
+                    .max()
+                    .or(Some(current_month))
+            });
+
+        if let (Some(sm), Some(em)) = (start_month, end_month) {
+            let expanded = expenses::expand_recurring_expenses(&recurring, &sm, &em);
+            all_expenses.extend(expanded);
+        }
+    }
+
+    // Fetch contractor hours from Notion if configured
+    if let Some(notion_config) = &file_config.notion {
+        match notion::fetch_hours_log(notion_config).await {
+            Ok(hours_entries) => {
+                let contractor_expenses = notion::hours_to_expenses(&hours_entries);
+                all_expenses.extend(contractor_expenses);
+            }
+            Err(e) => {
+                eprintln!("  Warning: Failed to fetch Notion data: {}", e);
+            }
+        }
+    }
+    println!("  {} expense entries\n", all_expenses.len());
+
+    // Fetch prices
+    println!("Fetching SOL prices...");
+    // We need rewards for the price fetcher, but we only need the transfers' dates
+    let rewards = fetch_rewards_with_cache(
+        cache, &config, start_epoch, end_epoch, current_epoch, no_cache, dune_api_key,
+    ).await?;
+    let price_cache = fetch_prices_with_cache(
+        cache, &rewards, &transfers, &config.coingecko_api_key, no_cache,
+    ).await?;
+    println!("  {} daily prices cached\n", price_cache.len());
+
+    // Create output dir and generate report
+    std::fs::create_dir_all(output_dir)?;
+
+    let tax_data = tax_report::TaxReportData {
+        config: &config,
+        categorized: &categorized,
+        doublezero_fees: &doublezero_fees,
+        vote_costs: &vote_costs,
+        expenses: &all_expenses,
+        prices: &price_cache,
+    };
+
+    tax_report::generate_tax_report(output_dir, &tax_data, year_filter)?;
+
+    Ok(())
+}
+
 fn parse_category(s: &str) -> Result<ExpenseCategory> {
     match s.to_lowercase().as_str() {
         "hosting" => Ok(ExpenseCategory::Hosting),
