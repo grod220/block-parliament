@@ -190,15 +190,27 @@ impl DuneClient {
         Ok(())
     }
 
+    fn sql_min_slot_clause(min_slot: Option<u64>) -> String {
+        match min_slot {
+            Some(slot) => format!("AND block_slot >= {}", slot),
+            None => String::new(),
+        }
+    }
+
     /// Fetch inflation rewards from Dune
     ///
     /// Queries the solana.rewards table for Voting rewards to the vote account.
     /// This captures the commission earned on staking rewards.
-    pub async fn fetch_inflation_rewards(&self, start_date: &str) -> Result<Vec<crate::transactions::EpochReward>> {
+    pub async fn fetch_inflation_rewards(
+        &self,
+        start_date: &str,
+        min_slot: Option<u64>,
+    ) -> Result<Vec<crate::transactions::EpochReward>> {
         Self::validate_date(start_date)?;
         Self::validate_address(&self.vote_account)?;
         println!("  Querying Dune for inflation rewards...");
 
+        let min_slot_clause = Self::sql_min_slot_clause(min_slot);
         let sql = format!(
             r#"
             SELECT
@@ -209,10 +221,11 @@ impl DuneClient {
             WHERE reward_type = 'Voting'
               AND recipient = '{}'
               AND block_date >= DATE '{}'
+              {}
             GROUP BY FLOOR(block_slot / 432000)
             ORDER BY epoch
             "#,
-            self.vote_account, start_date
+            self.vote_account, start_date, min_slot_clause
         );
 
         let rows = self.execute_query(&sql).await?;
@@ -245,11 +258,12 @@ impl DuneClient {
     ///
     /// Queries the solana.rewards table for Fee rewards to the identity account.
     /// This captures transaction fees earned when producing blocks as leader.
-    pub async fn fetch_leader_fees(&self, start_date: &str) -> Result<Vec<EpochLeaderFees>> {
+    pub async fn fetch_leader_fees(&self, start_date: &str, min_slot: Option<u64>) -> Result<Vec<EpochLeaderFees>> {
         Self::validate_date(start_date)?;
         Self::validate_address(&self.identity)?;
         println!("  Querying Dune for leader fees...");
 
+        let min_slot_clause = Self::sql_min_slot_clause(min_slot);
         let sql = format!(
             r#"
             SELECT
@@ -260,10 +274,11 @@ impl DuneClient {
             WHERE reward_type = 'Fee'
               AND recipient = '{}'
               AND block_date >= DATE '{}'
+              {}
             GROUP BY FLOOR(block_slot / 432000)
             ORDER BY epoch
             "#,
-            self.identity, start_date
+            self.identity, start_date, min_slot_clause
         );
 
         let rows = self.execute_query(&sql).await?;
@@ -297,11 +312,12 @@ impl DuneClient {
     /// Fetch vote transaction costs from Dune
     ///
     /// Queries the solana.vote_transactions table for votes signed by identity.
-    pub async fn fetch_vote_costs(&self, start_date: &str) -> Result<Vec<EpochVoteCost>> {
+    pub async fn fetch_vote_costs(&self, start_date: &str, min_slot: Option<u64>) -> Result<Vec<EpochVoteCost>> {
         Self::validate_date(start_date)?;
         Self::validate_address(&self.identity)?;
         println!("  Querying Dune for vote costs...");
 
+        let min_slot_clause = Self::sql_min_slot_clause(min_slot);
         let sql = format!(
             r#"
             SELECT
@@ -311,10 +327,11 @@ impl DuneClient {
             FROM solana.vote_transactions
             WHERE signer = '{}'
               AND block_date >= DATE '{}'
+              {}
             GROUP BY FLOOR(block_slot / 432000)
             ORDER BY epoch
             "#,
-            self.identity, start_date
+            self.identity, start_date, min_slot_clause
         );
 
         let rows = self.execute_query(&sql).await?;
@@ -348,7 +365,7 @@ impl DuneClient {
     ///
     /// Queries the tokens_solana.transfers table for native SOL transfers
     /// involving any of our tracked accounts.
-    pub async fn fetch_transfers(&self, start_date: &str) -> Result<Vec<SolTransfer>> {
+    pub async fn fetch_transfers(&self, start_date: &str, min_slot: Option<u64>) -> Result<Vec<SolTransfer>> {
         Self::validate_date(start_date)?;
         // Validate all addresses before building SQL
         Self::validate_address(&self.identity)?;
@@ -370,70 +387,121 @@ impl DuneClient {
             .collect::<Vec<_>>()
             .join(", ");
 
-        let sql = format!(
-            r#"
-            SELECT
-              block_date,
-              block_slot,
-              FLOOR(block_slot / 432000) as epoch,
-              from_owner,
-              to_owner,
-              amount_display as amount_sol,
-              tx_id as signature,
-              block_time
-            FROM tokens_solana.transfers
-            WHERE token_mint_address = 'So11111111111111111111111111111111111111111'
-              AND block_date >= DATE '{}'
-              AND (
-                from_owner IN ({})
-                OR to_owner IN ({})
-              )
-            ORDER BY block_slot DESC
-            LIMIT 5000
-            "#,
-            start_date, account_list, account_list
-        );
+        // This query can return a lot of rows for busy accounts. Page by `block_slot` to avoid
+        // silently truncating history at a fixed LIMIT.
+        const PAGE_LIMIT: usize = 5000;
+        const MAX_PAGES: usize = 10;
 
-        let rows = self.execute_query(&sql).await?;
-        println!("    Found {} transfers", rows.len());
+        let mut transfers: Vec<SolTransfer> = Vec::new();
+        // Cursor for paging: last seen (block_slot, tx_id) in descending order.
+        let mut cursor: Option<(u64, String)> = None;
 
-        let mut transfers = Vec::new();
-        for row in rows {
-            let slot = get_u64(&row, "block_slot")?;
-            let from_str = get_string(&row, "from_owner")?;
-            let to_str = get_string(&row, "to_owner")?;
-            let amount_sol = get_f64(&row, "amount_sol")?;
-            let signature = get_string(&row, "signature")?;
-            let date = get_string_opt(&row, "block_date");
-            let timestamp = get_timestamp_opt(&row, "block_time");
+        for page in 0..MAX_PAGES {
+            let min_slot_clause = Self::sql_min_slot_clause(min_slot);
+            let cursor_clause = match &cursor {
+                Some((slot, sig)) => format!(
+                    "AND (block_slot < {} OR (block_slot = {} AND tx_id < '{}'))",
+                    slot, slot, sig
+                ),
+                None => String::new(),
+            };
 
-            // Skip tiny transfers (dust)
-            let amount_lamports = sol_to_lamports(amount_sol);
-            if (amount_lamports as i64) < constants::MIN_TRANSFER_LAMPORTS {
-                continue;
+            let sql = format!(
+                r#"
+                SELECT
+                  block_date,
+                  block_slot,
+                  FLOOR(block_slot / 432000) as epoch,
+                  from_owner,
+                  to_owner,
+                  amount_display as amount_sol,
+                  tx_id as signature,
+                  block_time
+                FROM tokens_solana.transfers
+                WHERE token_mint_address = 'So11111111111111111111111111111111111111111'
+                  AND block_date >= DATE '{}'
+                  {}
+                  {}
+                  AND (
+                    from_owner IN ({})
+                    OR to_owner IN ({})
+                  )
+                ORDER BY block_slot DESC, tx_id DESC
+                LIMIT {}
+                "#,
+                start_date, min_slot_clause, cursor_clause, account_list, account_list, PAGE_LIMIT
+            );
+
+            let rows = self.execute_query(&sql).await?;
+            let raw_len = rows.len();
+            if page == 0 {
+                println!("    Found {} transfers (page 1)", raw_len);
+            } else {
+                println!("    Found {} transfers (page {})", raw_len, page + 1);
             }
 
-            // Parse pubkeys
-            let from = Pubkey::from_str(&from_str).unwrap_or_default();
-            let to = Pubkey::from_str(&to_str).unwrap_or_default();
+            if rows.is_empty() {
+                break;
+            }
 
-            let (from_label, from_category) = self.label_and_category(&from);
-            let (to_label, to_category) = self.label_and_category(&to);
+            for row in rows {
+                let slot = get_u64(&row, "block_slot")?;
+                let from_str = get_string(&row, "from_owner")?;
+                let to_str = get_string(&row, "to_owner")?;
+                let amount_sol = get_f64(&row, "amount_sol")?;
+                let signature = get_string(&row, "signature")?;
+                let date = get_string_opt(&row, "block_date");
+                let timestamp = get_timestamp_opt(&row, "block_time");
 
-            transfers.push(SolTransfer {
-                signature,
-                slot,
-                timestamp,
-                date,
-                from,
-                to,
-                amount_lamports,
-                amount_sol,
-                from_label,
-                to_label,
-                from_category,
-                to_category,
-            });
+                // Always advance the cursor based on the raw row ordering (even if we skip).
+                cursor = Some((slot, signature.clone()));
+
+                // Skip tiny transfers (dust)
+                let amount_lamports = sol_to_lamports(amount_sol);
+                if (amount_lamports as i64) < constants::MIN_TRANSFER_LAMPORTS {
+                    continue;
+                }
+
+                // Parse pubkeys
+                let from = match Pubkey::from_str(&from_str) {
+                    Ok(pk) => pk,
+                    Err(_) => continue,
+                };
+                let to = match Pubkey::from_str(&to_str) {
+                    Ok(pk) => pk,
+                    Err(_) => continue,
+                };
+
+                let (from_label, from_category) = self.label_and_category(&from);
+                let (to_label, to_category) = self.label_and_category(&to);
+
+                transfers.push(SolTransfer {
+                    signature,
+                    slot,
+                    timestamp,
+                    date,
+                    from,
+                    to,
+                    amount_lamports,
+                    amount_sol,
+                    from_label,
+                    to_label,
+                    from_category,
+                    to_category,
+                });
+            }
+
+            // If we hit the raw page limit, there might be more history. Continue paging older slots.
+            if raw_len < PAGE_LIMIT {
+                break;
+            }
+        }
+
+        if transfers.len() >= PAGE_LIMIT * MAX_PAGES {
+            eprintln!(
+                "    Warning: Dune transfer paging hit the max pages ({}). Results may be truncated.",
+                MAX_PAGES
+            );
         }
 
         Ok(transfers)

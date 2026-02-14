@@ -448,6 +448,7 @@ pub fn is_defi_protocol(pubkey: &Pubkey) -> bool {
 }
 
 /// Get all known DeFi protocol addresses as strings (for filtering)
+#[allow(dead_code)]
 pub fn get_defi_protocol_addresses() -> Vec<String> {
     KNOWN_ADDRESSES
         .iter()

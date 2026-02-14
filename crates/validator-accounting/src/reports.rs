@@ -51,7 +51,458 @@ pub fn generate_all_reports(output_dir: &Path, data: &ReportData, year_filter: O
     )?;
     generate_treasury_ledger(output_dir, data.categorized, data.prices)?;
     generate_summary(output_dir, data, year_filter)?;
+    generate_glossary(output_dir)?;
 
+    // Older versions generated a separate glossary/data-dictionary CSV. Remove it to
+    // avoid accidentally sharing stale context alongside the ledgers.
+    let _ = std::fs::remove_file(output_dir.join("report_context.csv"));
+
+    Ok(())
+}
+
+/// Generate glossary.csv (accountant-oriented data dictionary)
+fn generate_glossary(output_dir: &Path) -> Result<()> {
+    let path = output_dir.join(constants::GLOSSARY_FILENAME);
+    let mut wtr = Writer::from_path(&path)?;
+
+    wtr.write_record([
+        "field",
+        "display_name",
+        "type",
+        "unit",
+        "short_definition",
+        "why_it_matters",
+        "source_of_truth",
+        "notes_for_accountant",
+    ])?;
+
+    let mut row = |field: &str,
+                   display_name: &str,
+                   ty: &str,
+                   unit: &str,
+                   short_definition: &str,
+                   why_it_matters: &str,
+                   source_of_truth: &str,
+                   notes_for_accountant: &str|
+     -> Result<()> {
+        wtr.write_record([
+            field,
+            display_name,
+            ty,
+            unit,
+            short_definition,
+            why_it_matters,
+            source_of_truth,
+            notes_for_accountant,
+        ])?;
+        Ok(())
+    };
+
+    // Core revenue
+    row(
+        "commission_sol",
+        "Staking commission",
+        "revenue",
+        "SOL",
+        "Validator's share of staking rewards (commission) from delegated stake.",
+        "Primary validator service revenue stream.",
+        "Solana protocol inflation rewards (RPC `getInflationReward` via vote account; cached locally).",
+        "Recognize per your revenue policy. Report also provides USD valuation using a daily SOL price; confirm pricing methodology required for tax reporting.",
+    )?;
+    row(
+        "commission_usd",
+        "Staking commission (USD valuation)",
+        "revenue",
+        "USD",
+        "USD valuation of staking commission at the selected daily SOL price.",
+        "Used for USD books/tax reporting when SOL-denominated income is received.",
+        "Computed by this tool from commission SOL and daily SOL USD price (CoinGecko, cached).",
+        "Confirm pricing policy (daily close vs spot at receipt time; UTC vs local). Use a consistent method across all crypto activity.",
+    )?;
+    row(
+        "leader_fees_sol",
+        "Leader fees",
+        "revenue",
+        "SOL",
+        "Transaction fees earned when the validator produces blocks (is the leader).",
+        "Often the largest non-staking revenue component; varies with network activity.",
+        "Solana on-chain block/fee data (derived leader slot fees; cached locally; may be imported/backfilled).",
+        "Represents fees earned by block production. May include base and priority fees depending on data source and network rules.",
+    )?;
+    row(
+        "leader_fees_usd",
+        "Leader fees (USD valuation)",
+        "revenue",
+        "USD",
+        "USD valuation of leader fees at the selected daily SOL price.",
+        "Used for USD books/tax reporting of SOL-denominated fee income.",
+        "Computed by this tool from leader fees SOL and daily SOL USD price (CoinGecko, cached).",
+        "Confirm pricing policy and ensure it matches how other SOL income is valued.",
+    )?;
+    row(
+        "mev_tips_sol",
+        "MEV tips (Jito)",
+        "revenue",
+        "SOL",
+        "Optional tips paid via Jito distribution (often for transaction priority/ordering).",
+        "Can be meaningful and volatile; may need separate disclosure/classification.",
+        "Jito claim API (primary) and/or on-chain receipts (fallback).",
+        "MEV tips are separate from standard Solana transaction fees. If you prefer, classify separately from leader fees.",
+    )?;
+    row(
+        "mev_tips_usd",
+        "MEV tips (Jito, USD valuation)",
+        "revenue",
+        "USD",
+        "USD valuation of MEV tips at the selected daily SOL price.",
+        "Used for USD books/tax reporting of MEV-related income.",
+        "Computed by this tool from MEV tips SOL and daily SOL USD price (CoinGecko, cached).",
+        "If you use a different pricing source for tax lots, you may want to revalue these externally and treat the report as a reconciliation aid.",
+    )?;
+    row(
+        "bam_sol",
+        "BAM incentives (Jito)",
+        "revenue",
+        "SOL-equivalent",
+        "Validator incentive rewards paid in jitoSOL (a liquid staking token) valued at a SOL-equivalent amount for reporting.",
+        "Additional validator revenue; different asset form (token) may affect tracking/valuation.",
+        "Jito BAM claim history + on-chain token receipt; valued using configured jitoSOL-to-SOL rate and SOL USD price.",
+        "These rows are paid in jitoSOL; the report converts to SOL-equivalent for valuation. For tax, you may need fair market value at receipt and asset-specific lots.",
+    )?;
+    row(
+        "bam_usd",
+        "BAM incentives (Jito, USD valuation)",
+        "revenue",
+        "USD",
+        "USD valuation of BAM incentives at the selected daily SOL price (after converting to SOL-equivalent).",
+        "Used for USD books/tax reporting of token-denominated income.",
+        "Computed by this tool from BAM SOL-equivalent and daily SOL USD price (CoinGecko, cached).",
+        "Because BAM is paid in jitoSOL, confirm whether you need the jitoSOL spot USD price at receipt instead of a SOL-equivalent proxy.",
+    )?;
+
+    // Pricing/valuation mechanics used throughout the CSVs
+    row(
+        "usd_price",
+        "SOL USD price (daily)",
+        "assumption",
+        "USD per SOL",
+        "Daily SOL USD price used to value SOL-denominated amounts.",
+        "Drives USD revenue/expense totals and tax reporting values if you rely on this output.",
+        "CoinGecko daily price (UTC), cached locally; falls back to a fixed price if API fails.",
+        "If you must use a different pricing policy (spot at receipt time, different provider, local timezone), revalue externally and use this report for SOL-denominated quantities and traceability.",
+    )?;
+    row(
+        "usd_value",
+        "USD value (valuation)",
+        "derived",
+        "USD",
+        "USD valuation of a SOL-denominated amount using the tool's daily SOL USD price.",
+        "Provides a consistent USD view for bookkeeping.",
+        "Computed by this tool: Amount_SOL * USD_Price (or equivalent).",
+        "This is a valuation, not necessarily cash received/spent in USD.",
+    )?;
+
+    // Core operating expenses
+    row(
+        "vote_costs_sol",
+        "Vote costs",
+        "expense",
+        "SOL",
+        "On-chain transaction fees paid to submit validator vote transactions.",
+        "Core operating cost required to participate in consensus and earn rewards.",
+        "Vote fee dataset (import/backfill/estimate) + on-chain fee economics; cached locally.",
+        "These are on-chain network fees. The report also provides gross USD valuation and net USD after SFDP coverage.",
+    )?;
+    row(
+        "vote_costs_gross_usd",
+        "Vote costs (gross, USD valuation)",
+        "expense",
+        "USD",
+        "Gross USD valuation of vote transaction fees before SFDP coverage is applied.",
+        "Supports an expense view in USD and an explicit SFDP offset calculation.",
+        "Computed by this tool from vote costs SOL and daily SOL USD price (CoinGecko, cached).",
+        "Gross vs net is driven by the SFDP coverage schedule modeled by this tool.",
+    )?;
+    row(
+        "vote_costs_net_usd",
+        "Vote costs (net after SFDP, USD valuation)",
+        "expense",
+        "USD",
+        "Net USD vote fee cost after applying SFDP coverage percent.",
+        "Represents out-of-pocket vote fee expense after modeled program reimbursement.",
+        "Computed by this tool: Vote_Costs_Gross_USD * (1 - SFDP_Coverage).",
+        "This is a modeled net. Actual SFDP transfers may differ; consider reconciling to actual receipts if needed for your books/tax approach.",
+    )?;
+    row(
+        "sfdp_coverage_percent",
+        "SFDP coverage percent",
+        "assumption",
+        "percent",
+        "The percent of vote transaction fees covered/reimbursed under Solana Foundation Delegation Program (SFDP).",
+        "Directly reduces out-of-pocket vote fee expense.",
+        "Config setting (`validator.sfdp_acceptance_date`) + coverage schedule implemented by this tool.",
+        "This tool treats SFDP as a contra-expense (offset to vote fees). You may prefer alternative presentation; decide and apply consistently.",
+    )?;
+    row(
+        "sfdp_offset_usd",
+        "SFDP vote reimbursement",
+        "contra-expense",
+        "USD",
+        "Portion of vote costs treated as covered by SFDP (gross vote costs minus net vote costs).",
+        "Reduces out-of-pocket vote expense; affects operating profit.",
+        "Computed: Vote_Costs_Gross_USD - Vote_Costs_Net_USD (per month in summary).",
+        "Depending on your accounting/tax policy, this could be presented as contra-expense or as other income. This report currently models it as contra-expense.",
+    )?;
+    row(
+        "sfdp_reimbursements_actual",
+        "SFDP reimbursements (actual transfers)",
+        "info",
+        "SOL/USD",
+        "Actual on-chain transfers received from a Solana Foundation SFDP reimbursement address.",
+        "Useful to reconcile modeled SFDP offsets to actual receipts and to support audit trail.",
+        "On-chain receipts (incoming SOL transfers from known SFDP reimbursement wallet).",
+        "This tool currently models SFDP as a coverage schedule and does not output a dedicated SFDP receipts ledger. If you want, we can add `sfdp_ledger.csv` or include these transfers in `treasury_ledger.csv` with clear labeling.",
+    )?;
+
+    // DoubleZero: accrued vs paid vs outstanding
+    row(
+        "doublezero_fees_usd",
+        "DoubleZero fees (accrued)",
+        "expense",
+        "USD",
+        "Networking service fees incurred (accrued) related to DoubleZero program.",
+        "Infrastructure cost supporting validator performance; may be material.",
+        "Derived accrual from configured fee rate applied to relevant on-chain activity; cached locally.",
+        "This tool tracks accrued fees separate from payments. If you receive invoices/contract statements, use them as source-of-truth and reconcile.",
+    )?;
+    row(
+        "doublezero_fees_sol",
+        "DoubleZero fees (accrued, SOL)",
+        "expense",
+        "SOL",
+        "Accrued DoubleZero fee amount denominated in SOL.",
+        "Supports reconciliation and audit trail back to SOL quantities.",
+        "Derived by this tool from configured fee rules; cached locally.",
+        "If you book DoubleZero on an invoice basis, you may ignore this accrual and treat it as an estimate/reconciliation aid.",
+    )?;
+    row(
+        "doublezero_paid_usd",
+        "DoubleZero paid",
+        "cash_movement",
+        "USD",
+        "Payments made to DoubleZero during the period.",
+        "Used for cash reconciliation; not necessarily equal to incurred expense in the month.",
+        "On-chain transfers categorized as DoubleZero deposits/prepayments.",
+        "Payments can be prepayments; expense should follow your accrual policy. Reconcile wallet outflows to this line.",
+    )?;
+    row(
+        "doublezero_paid_sol",
+        "DoubleZero paid (SOL)",
+        "cash_movement",
+        "SOL",
+        "SOL-denominated amount transferred as a DoubleZero deposit/prepayment.",
+        "Used for on-chain reconciliation to wallet activity.",
+        "On-chain transfers categorized as DoubleZero deposits/prepayments.",
+        "Not necessarily equal to incurred expense in the month.",
+    )?;
+    row(
+        "doublezero_ap_usd",
+        "DoubleZero outstanding (A/P)",
+        "balance_tracking",
+        "USD",
+        "Accrued minus paid balance (liability) owed to DoubleZero.",
+        "Supports reconciliation and period-to-period roll-forward.",
+        "Computed: DoubleZero_Fees_USD - DoubleZero_Paid_USD (monthly/annual in summary).",
+        "Treat as payable/contra-prepayment depending on how DoubleZero billing works for you.",
+    )?;
+    row(
+        "doublezero_outstanding_sol",
+        "DoubleZero outstanding (SOL)",
+        "balance_tracking",
+        "SOL",
+        "Accrued minus paid DoubleZero amount in SOL.",
+        "Supports reconciliation when liabilities are tracked in SOL.",
+        "Computed by this tool from accrued SOL and paid SOL.",
+        "If you track A/P in USD only, use the USD version and treat SOL as supporting detail.",
+    )?;
+
+    // Other operating expenses (off-chain)
+    row(
+        "other_expenses_usd",
+        "Other opex",
+        "expense",
+        "USD",
+        "Non-on-chain operating costs (hosting, tools, contractors, hardware/software, etc.).",
+        "Day-to-day operating costs; needs supporting detail for deductibility and categorization.",
+        "Local expense tracker (manual entries, recurring schedule, and optional Notion-based contractor hours).",
+        "Keep vendor-level support (invoices/receipts). This report is only as accurate as the expense inputs.",
+    )?;
+
+    // Summary-level totals (monthly)
+    row(
+        "total_revenue_usd",
+        "Total revenue (USD)",
+        "derived",
+        "USD",
+        "Sum of revenue streams for the period in USD.",
+        "Top-line measure for P&L reporting.",
+        "Computed by this tool (commission + leader fees + MEV tips + BAM), valued at daily SOL USD prices.",
+        "If you revalue items with a different pricing policy, recompute totals externally.",
+    )?;
+    row(
+        "total_expenses_usd",
+        "Total expenses (USD)",
+        "derived",
+        "USD",
+        "Sum of expenses for the period in USD (vote costs net + DoubleZero accrued + other opex).",
+        "Used to compute net profit and track operating costs.",
+        "Computed by this tool from underlying expense components.",
+        "Ensure SFDP treatment aligns with your reporting policy (contra-expense vs other income).",
+    )?;
+    row(
+        "net_profit_usd",
+        "Net profit (USD)",
+        "derived",
+        "USD",
+        "Total revenue minus total expenses for the period in USD.",
+        "High-level performance metric; drives tax planning discussions.",
+        "Computed by this tool from totals.",
+        "Does not include capital gains/losses from selling/swapping crypto unless those are separately modeled.",
+    )?;
+
+    // Helpful meta fields that appear in ledgers
+    row(
+        "epoch",
+        "Epoch (Solana)",
+        "metadata",
+        "",
+        "Solana epoch identifier (roughly a ~2-day network period).",
+        "Used to group staking rewards and some fee calculations.",
+        "Solana protocol epoch numbering.",
+        "Dates for epoch-based rows can be approximate if derived from epoch number rather than on-chain timestamp.",
+    )?;
+    row(
+        "tx_signature",
+        "Transaction signature / id",
+        "metadata",
+        "",
+        "Unique identifier for a Solana transaction; some rows use a synthetic id like `epoch-N` for epoch-based items.",
+        "Helps trace back to on-chain evidence for audits/reconciliation.",
+        "Solana transaction signatures; synthetic ids generated by this tool for certain epoch-based rows.",
+        "If you need strict auditability, prefer rows with real transaction signatures and reconcile epoch-based synthetic ids to on-chain reward records.",
+    )?;
+
+    row(
+        "accounting_treatment",
+        "Accounting treatment label",
+        "metadata",
+        "",
+        "Classification label in ledgers indicating whether a row is Income (Revenue), Expense, or Balance Sheet movement.",
+        "Helps map lines to chart-of-accounts buckets and prevents treating transfers as income/expense.",
+        "Generated by this tool based on transaction categorization and report type.",
+        "You may override classifications for your specific entity/tax approach, but this provides a sane default.",
+    )?;
+
+    // Scope and categorization assumptions (these are usually the #1 source of confusion)
+    row(
+        "wallet_scope",
+        "Wallet/account scope",
+        "assumption",
+        "",
+        "Which on-chain accounts are considered 'in scope' for this validator's books (vote/identity/withdraw authority and any configured personal wallet used for seeding/flows).",
+        "Determines whether transfers are treated as internal movements vs external (potential distributions, contributions, etc.).",
+        "config.toml validator addresses (vote_account, identity, withdraw_authority, personal_wallet) plus derived token accounts (ATAs) where applicable.",
+        "Confirm which wallets legally belong to the reporting entity. If a personal wallet is mixed-use, treasury transfers may require manual classification (owner distribution vs business transfer).",
+    )?;
+    row(
+        "treasury_transfer_types",
+        "Treasury transfer types",
+        "metadata",
+        "",
+        "High-level labels used in treasury_ledger.csv: Capital Contribution, Internal Transfer, Prepayment, Withdrawal, Other.",
+        "Prevents treating balance sheet movements as revenue/expense.",
+        "Generated by this tool based on known addresses and transfer direction.",
+        "Withdrawals are not automatically expenses; they may represent owner distributions or moving funds to an exchange. Review and reclassify as needed.",
+    )?;
+    row(
+        "address_labels",
+        "Address labels (counterparty identification)",
+        "info",
+        "",
+        "Human-friendly labels for blockchain addresses (e.g., Solana Foundation, Jito, exchanges).",
+        "Improves auditability and reduces time spent matching addresses to counterparties.",
+        "This tool's built-in address label map + configured addresses in config.toml.",
+        "Labels are best-effort and may be incomplete. For audit support, keep your own mapping for any recurring counterparties.",
+    )?;
+    row(
+        "tx_signature_truncation",
+        "Transaction signature truncation",
+        "assumption",
+        "",
+        "Some CSVs show only the first 16 characters of a Solana transaction signature for readability.",
+        "A truncated id may not be sufficient to independently verify a transaction without looking up the full signature.",
+        "Generated by this tool in the CSV output formatting.",
+        "If you need full signatures for audit workpapers, we can add a 'Tx_Signature_Full' column or stop truncating signatures in the ledgers.",
+    )?;
+    row(
+        "year_filter_behavior",
+        "Year filter behavior (--year)",
+        "assumption",
+        "",
+        "The --year flag filters summary.csv and the printed console summary; the ledgers are not currently year-filtered.",
+        "If you hand the accountant only a single year's summary but the ledgers include multiple years, it can look inconsistent.",
+        "validator-accounting CLI behavior.",
+        "If you want year-filtered ledgers, we can implement it so all CSVs align to the same period.",
+    )?;
+
+    // Off-chain expense metadata commonly needed for substantiation
+    row(
+        "paid_with",
+        "Paid with",
+        "metadata",
+        "",
+        "Payment method for an off-chain expense (USD, SOL, credit card, etc.).",
+        "Supports cash/bank/credit card reconciliation and helps determine whether an expense is crypto-denominated.",
+        "User-entered expense tracker fields (manual/recurring/Notion-derived).",
+        "If paid in crypto, you may have an associated disposition (capital gain/loss) when the crypto was spent.",
+    )?;
+    row(
+        "invoice_id",
+        "Invoice/receipt id",
+        "metadata",
+        "",
+        "Optional invoice, receipt, or reference id for off-chain expenses.",
+        "Helps tie ledger lines to supporting documentation.",
+        "User-entered expense tracker fields.",
+        "If blank, consider adding invoice ids for material expenses to simplify substantiation.",
+    )?;
+
+    // Data sources (useful to explain confidence/limitations)
+    row(
+        "data_sources",
+        "Data sources used",
+        "info",
+        "",
+        "External sources used by this tool: Solana RPC (Helius endpoint), CoinGecko pricing, Jito APIs, optional Dune backfills, optional Notion hours logs.",
+        "Explains where numbers come from and where gaps/estimates might exist.",
+        "Runtime configuration + cached datasets in ./data.",
+        "If a source is missing or rate-limited, the tool may fall back to cached data or estimates; review the console output for warnings.",
+    )?;
+
+    // Explicitly call out what's missing from these reports (so expectations are clear)
+    row(
+        "out_of_scope_capital_gains",
+        "Capital gains/losses (out of scope)",
+        "out_of_scope",
+        "",
+        "Gains/losses from selling, swapping, or spending crypto (dispositions) are not computed here.",
+        "These are often the largest tax complexity for crypto activity.",
+        "Dedicated tax lot software / exchange statements / detailed transaction history.",
+        "Use these CSVs for validator operations income/expense and wallet movement context, but compute dispositions separately (cost basis, proceeds, lots, wash sale rules if applicable).",
+    )?;
+
+    wtr.flush()?;
+    println!("  Generated: {}", path.display());
     Ok(())
 }
 
@@ -70,16 +521,17 @@ fn generate_income_ledger(
 
     // Header
     wtr.write_record([
-        "Date",
-        "Epoch",
-        "Source",
-        "From_Address",
-        "From_Label",
-        "Amount_SOL",
-        "USD_Price",
-        "USD_Value",
-        "Tx_Signature",
-        "Notes",
+        "Date (YYYY-MM-DD)",
+        "Epoch (Solana ~2-day period)",
+        "Accounting_Treatment (Income/Expense/Balance Sheet)",
+        "Source (plain English)",
+        "From_Address (blockchain address or label)",
+        "From_Label (who/what is it?)",
+        "Amount_SOL (SOL, Solana cryptocurrency)",
+        "USD_Price (USD per 1 SOL)",
+        "USD_Value (Amount_SOL * USD_Price)",
+        "Tx_Signature (tx id or epoch-N)",
+        "Notes (plain English)",
     ])?;
 
     // Commission rewards
@@ -91,14 +543,18 @@ fn generate_income_ledger(
         wtr.write_record([
             date,
             &reward.epoch.to_string(),
-            "Commission",
-            "Vote Account",
-            "Inflation Reward",
+            "Income (Revenue)",
+            "Staking commission (Solana inflation rewards)",
+            "Solana protocol",
+            "Staking inflation reward (to validator vote account)",
             &format!("{:.6}", reward.amount_sol),
             &format!("{:.2}", price),
             &format!("{:.2}", usd_value),
             &format!("epoch-{}", reward.epoch),
-            &format!("{}% commission on delegator rewards", reward.commission),
+            &format!(
+                "Staking reward payout. Validator keeps {}% commission from delegated stake rewards.",
+                reward.commission
+            ),
         ])?;
     }
 
@@ -125,14 +581,15 @@ fn generate_income_ledger(
         wtr.write_record([
             date,
             "",
-            "Jito MEV",
+            "Income (Revenue)",
+            "MEV tips (Jito)",
             &transfer.from.to_string(),
             &transfer.from_label,
             &format!("{:.6}", transfer.amount_sol),
             &format!("{:.2}", price),
             &format!("{:.2}", usd_value),
             &transfer.signature[..16],
-            "MEV tip distribution from Jito (fallback)",
+            "Extra validator income from optional 'tips' paid via Jito (often for transaction priority). Fallback row: inferred from on-chain transfer (no per-epoch API claim data).",
         ])?;
     }
 
@@ -145,15 +602,16 @@ fn generate_income_ledger(
         wtr.write_record([
             date,
             &claim.epoch.to_string(),
-            "Jito MEV",
-            "Jito Tip Distribution",
-            "Vote Account",
+            "Income (Revenue)",
+            "MEV tips (Jito)",
+            "Jito tip distribution",
+            "MEV tip payout (to validator vote account)",
             &format!("{:.6}", claim.amount_sol),
             &format!("{:.2}", price),
             &format!("{:.2}", usd_value),
             &format!("epoch-{}", claim.epoch),
             &format!(
-                "{}% commission on {:.4} SOL tips",
+                "Extra validator income from optional 'tips' paid via Jito (often for transaction priority). Validator received ~{}% of {:.4} SOL of tips for this epoch.",
                 if claim.total_tips_lamports > 0 {
                     (claim.commission_lamports as f64 / claim.total_tips_lamports as f64 * 100.0).round() as u64
                 } else {
@@ -173,15 +631,16 @@ fn generate_income_ledger(
         wtr.write_record([
             date,
             &fees.epoch.to_string(),
-            "Leader Fees",
-            "Identity Account",
-            "Block Production",
+            "Income (Revenue)",
+            "Block production fees (Solana)",
+            "Solana protocol",
+            "Transaction fees earned for producing blocks",
             &format!("{:.6}", fees.total_fees_sol),
             &format!("{:.2}", price),
             &format!("{:.2}", usd_value),
             &format!("epoch-{}", fees.epoch),
             &format!(
-                "{} blocks produced, {} skipped",
+                "Validator produced {} blocks ({} skipped slots) during this epoch.",
                 fees.blocks_produced, fees.skipped_slots
             ),
         ])?;
@@ -198,15 +657,16 @@ fn generate_income_ledger(
         wtr.write_record([
             date,
             &claim.epoch.to_string(),
-            "BAM Rewards",
-            "Jito BAM Boost",
-            "Identity Token Account",
+            "Income (Revenue)",
+            "Validator incentives (Jito BAM, paid in jitoSOL)",
+            "Jito BAM Boost program",
+            "jitoSOL reward payout (to validator token account)",
             &format!("{:.6}", claim.amount_sol_equivalent),
             &format!("{:.2}", price),
             &format!("{:.2}", usd_value),
             &claim.tx_signature[..claim.tx_signature.len().min(16)],
             &format!(
-                "{:.6} jitoSOL (rate: {:.4})",
+                "{:.6} jitoSOL (a liquid staking token representing staked SOL). Valued at {:.4} SOL per jitoSOL.",
                 jitosol_amount,
                 claim.jitosol_sol_rate.unwrap_or(1.0)
             ),
@@ -233,16 +693,17 @@ fn generate_expense_ledger(
 
     // Header
     wtr.write_record([
-        "Date",
-        "Epoch",
+        "Date (YYYY-MM-DD)",
+        "Epoch (Solana ~2-day period)",
         "Vendor",
-        "Category",
-        "Description",
-        "Amount_SOL",
-        "Amount_USD",
-        "Paid_With",
-        "SFDP_Coverage",
-        "Net_Amount_USD",
+        "Accounting_Treatment (Income/Expense/Balance Sheet)",
+        "Category (plain English)",
+        "Description (plain English)",
+        "Amount_SOL (SOL, Solana cryptocurrency)",
+        "Amount_USD (gross valuation on Date)",
+        "Paid_With (asset)",
+        "SFDP_Coverage (% of vote fees reimbursed by Solana Foundation program)",
+        "Net_Amount_USD (gross * (1 - coverage))",
         "Invoice_ID",
     ])?;
 
@@ -262,8 +723,12 @@ fn generate_expense_ledger(
             date,
             &cost.epoch.to_string(),
             "Solana Network",
-            "VoteFees",
-            &format!("{} votes ({})", cost.vote_count, cost.source),
+            "Expense",
+            "On-chain vote transaction fees",
+            &format!(
+                "Transaction fees for {} validator vote transactions (source: {}). SFDP = Solana Foundation Delegation Program; SFDP_Coverage indicates the % reimbursed, and Net_Amount_USD is the remaining cost.",
+                cost.vote_count, cost.source
+            ),
             &format!("{:.6}", cost.total_fee_sol),
             &format!("{:.2}", gross_usd),
             "SOL",
@@ -286,9 +751,10 @@ fn generate_expense_ledger(
             date,
             &fee.epoch.to_string(),
             "DoubleZero",
-            "Network Fees",
+            "Expense",
+            "Network fees (DoubleZero)",
             &format!(
-                "Block reward sharing (base {:.4} SOL, {:.2}% {})",
+                "Block reward sharing fee owed to DoubleZero (base {:.4} SOL, {:.2}% {}, paid separately when deposited).",
                 fee_base_sol, rate_percent, status
             ),
             &format!("{:.6}", fee.liability_sol),
@@ -307,6 +773,7 @@ fn generate_expense_ledger(
             &expense.date,
             "", // No epoch for off-chain expenses
             &expense.vendor,
+            "Expense",
             &expense.category.to_string(),
             &expense.description,
             "", // No SOL amount
@@ -331,16 +798,17 @@ fn generate_treasury_ledger(output_dir: &Path, categorized: &CategorizedTransfer
 
     // Header
     wtr.write_record([
-        "Date",
-        "Type",
-        "From_Address",
-        "From_Label",
-        "To_Address",
-        "To_Label",
-        "Amount_SOL",
-        "USD_Value",
-        "Tx_Signature",
-        "Notes",
+        "Date (YYYY-MM-DD)",
+        "Type (plain English)",
+        "From_Address (blockchain address)",
+        "From_Label (who/what is it?)",
+        "To_Address (blockchain address)",
+        "To_Label (who/what is it?)",
+        "Accounting_Treatment (Income/Expense/Balance Sheet)",
+        "Amount_SOL (SOL, Solana cryptocurrency)",
+        "USD_Value (valuation on Date)",
+        "Tx_Signature (tx id)",
+        "Notes (plain English)",
     ])?;
 
     // Initial seeding
@@ -356,10 +824,11 @@ fn generate_treasury_ledger(output_dir: &Path, categorized: &CategorizedTransfer
             &transfer.from_label,
             &transfer.to.to_string(),
             &transfer.to_label,
+            "Balance Sheet (Owner contribution)",
             &format!("{:.6}", transfer.amount_sol),
             &format!("{:.2}", usd_value),
             &transfer.signature[..16],
-            "Initial validator seeding",
+            "Owner capital contribution to fund validator operations (balance sheet movement, not income).",
         ])?;
     }
 
@@ -376,10 +845,11 @@ fn generate_treasury_ledger(output_dir: &Path, categorized: &CategorizedTransfer
             &transfer.from_label,
             &transfer.to.to_string(),
             &transfer.to_label,
+            "Balance Sheet (Internal transfer)",
             &format!("{:.6}", transfer.amount_sol),
             &format!("{:.2}", usd_value),
             &transfer.signature[..16],
-            "Vote account funding",
+            "Move funds between internal validator wallets to pay on-chain transaction fees (not income).",
         ])?;
     }
 
@@ -396,10 +866,11 @@ fn generate_treasury_ledger(output_dir: &Path, categorized: &CategorizedTransfer
             &transfer.from_label,
             &transfer.to.to_string(),
             &transfer.to_label,
+            "Balance Sheet (Prepayment/deposit)",
             &format!("{:.6}", transfer.amount_sol),
             &format!("{:.2}", usd_value),
             &transfer.signature[..16],
-            "DoubleZero deposit (prepaid fees)",
+            "Deposit to DoubleZero to prepay network fee obligations (balance sheet movement; expense recorded as fees accrue).",
         ])?;
     }
 
@@ -416,10 +887,11 @@ fn generate_treasury_ledger(output_dir: &Path, categorized: &CategorizedTransfer
             &transfer.from_label,
             &transfer.to.to_string(),
             &transfer.to_label,
+            "Balance Sheet (Transfer out)",
             &format!("{:.6}", transfer.amount_sol),
             &format!("{:.2}", usd_value),
             &transfer.signature[..16],
-            "Withdrawal to exchange/personal",
+            "Transfer out to exchange/personal wallet (owner distribution or asset movement; not automatically income/expense).",
         ])?;
     }
 
@@ -436,10 +908,11 @@ fn generate_treasury_ledger(output_dir: &Path, categorized: &CategorizedTransfer
             &transfer.from_label,
             &transfer.to.to_string(),
             &transfer.to_label,
+            "Balance Sheet (Transfer)",
             &format!("{:.6}", transfer.amount_sol),
             &format!("{:.2}", usd_value),
             &transfer.signature[..16],
-            "Uncategorized transfer",
+            "Uncategorized transfer (typically a balance sheet movement, not P&L).",
         ])?;
     }
 
@@ -592,30 +1065,30 @@ fn generate_summary(output_dir: &Path, data: &ReportData, year_filter: Option<i3
 
     // Header
     wtr.write_record([
-        "Month",
-        "Commission_SOL",
-        "Commission_USD",
-        "Leader_Fees_SOL",
-        "Leader_Fees_USD",
-        "MEV_SOL",
-        "MEV_USD",
-        "BAM_SOL",
-        "BAM_USD",
-        "Total_Revenue_USD",
-        "Vote_Costs_SOL",
-        "Vote_Costs_Gross_USD",
-        "SFDP_Offset_USD",
-        "Vote_Costs_Net_USD",
-        "DoubleZero_Fees_SOL",
-        "DoubleZero_Fees_USD",
-        "DoubleZero_Paid_SOL",
-        "DoubleZero_Paid_USD",
-        "DoubleZero_Outstanding_SOL",
-        "DoubleZero_Outstanding_USD",
-        "Other_Expenses_USD",
-        "Total_Expenses_USD",
-        "Net_Profit_USD",
-        "YTD_Profit_USD",
+        "Month (YYYY-MM)",
+        "Commission_SOL (staking commission, SOL)",
+        "Commission_USD (staking commission, USD)",
+        "Leader_Fees_SOL (block production fees, SOL)",
+        "Leader_Fees_USD (block production fees, USD)",
+        "MEV_SOL (Jito MEV tips, SOL)",
+        "MEV_USD (Jito MEV tips, USD)",
+        "BAM_SOL (Jito BAM incentives, SOL-equiv)",
+        "BAM_USD (Jito BAM incentives, USD)",
+        "Total_Revenue_USD (sum of revenue items)",
+        "Vote_Costs_SOL (on-chain vote tx fees, SOL)",
+        "Vote_Costs_Gross_USD (before SFDP reimbursement)",
+        "SFDP_Offset_USD (Solana Foundation reimbursement, reduces expense)",
+        "Vote_Costs_Net_USD (after SFDP reimbursement)",
+        "DoubleZero_Fees_SOL (accrued, SOL)",
+        "DoubleZero_Fees_USD (accrued, USD)",
+        "DoubleZero_Paid_SOL (payments made, SOL)",
+        "DoubleZero_Paid_USD (payments made, USD)",
+        "DoubleZero_Outstanding_SOL (accrued - paid, SOL)",
+        "DoubleZero_Outstanding_USD (accrued - paid, USD)",
+        "Other_Expenses_USD (off-chain expenses)",
+        "Total_Expenses_USD (vote net + DoubleZero + other)",
+        "Net_Profit_USD (revenue - expenses)",
+        "YTD_Profit_USD (resets each Jan)",
     ])?;
 
     let mut months: Vec<_> = monthly.keys().cloned().collect();

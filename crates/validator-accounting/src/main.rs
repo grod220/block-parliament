@@ -21,10 +21,14 @@ mod rpc;
 mod transactions;
 mod vote_costs;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use chrono::{NaiveDate, Utc};
 use clap::{Parser, Subcommand};
 use solana_commitment_config::CommitmentConfig;
+use solana_sdk::pubkey::Pubkey;
 use std::path::PathBuf;
+use std::str::FromStr;
+use std::time::Duration;
 
 use cache::Cache;
 use config::FileConfig;
@@ -357,6 +361,9 @@ enum PositionCommand {
 
     /// Run reconciliation check (expected vs actual balances)
     Reconcile,
+
+    /// Explain reconciliation variance (diagnostics + untracked assets)
+    Explain,
 
     /// Show stake accounts owned by validator
     Stake,
@@ -710,18 +717,20 @@ async fn handle_recurring_command(action: RecurringCommand, cache: &Cache) -> Re
                 for expense in &recurring {
                     let id = expense.id.map(|i| i.to_string()).unwrap_or_default();
                     let end = expense.end_date.as_deref().unwrap_or("ongoing");
+                    let start_month = month_key_from_date(&expense.start_date).unwrap_or_else(|| "invalid".to_string());
+                    let end_month = if end == "ongoing" {
+                        "ongoing".to_string()
+                    } else {
+                        month_key_from_date(end).unwrap_or_else(|| "invalid".to_string())
+                    };
                     println!(
                         "{:<4} {:<15} {:<12} ${:>9.2}  {:<12} {:<10} {}",
                         id,
                         truncate(&expense.vendor, 14),
                         expense.category,
                         expense.amount_usd,
-                        &expense.start_date[..7], // Just show YYYY-MM
-                        if end == "ongoing" {
-                            end.to_string()
-                        } else {
-                            end[..7].to_string()
-                        },
+                        start_month,
+                        end_month,
                         truncate(&expense.description, 25),
                     );
                     total += expense.amount_usd;
@@ -743,6 +752,20 @@ async fn handle_recurring_command(action: RecurringCommand, cache: &Cache) -> Re
             end_date,
         } => {
             let category = parse_category(&category)?;
+            let start = parse_yyyy_mm_dd("start_date", &start_date)?;
+            let end_date = end_date
+                .as_deref()
+                .map(|d| parse_yyyy_mm_dd("end_date", d))
+                .transpose()?;
+            if let Some(end) = end_date
+                && end < start
+            {
+                anyhow::bail!(
+                    "Invalid end_date '{}': must be on or after start_date '{}'.",
+                    end.format("%Y-%m-%d"),
+                    start.format("%Y-%m-%d")
+                );
+            }
 
             let expense = RecurringExpense {
                 id: None,
@@ -751,8 +774,8 @@ async fn handle_recurring_command(action: RecurringCommand, cache: &Cache) -> Re
                 description,
                 amount_usd: amount,
                 paid_with,
-                start_date,
-                end_date,
+                start_date: start.format("%Y-%m-%d").to_string(),
+                end_date: end_date.map(|d| d.format("%Y-%m-%d").to_string()),
             };
 
             let id = cache.add_recurring_expense(&expense).await?;
@@ -791,7 +814,7 @@ async fn handle_dune_command(action: DuneCommand, cache: &Cache, config_path: Op
         DuneCommand::Rewards { since } => {
             println!("Importing inflation rewards since {}...\n", since);
 
-            let rewards = client.fetch_inflation_rewards(&since).await?;
+            let rewards = client.fetch_inflation_rewards(&since, None).await?;
 
             if rewards.is_empty() {
                 println!("No rewards found.");
@@ -818,7 +841,7 @@ async fn handle_dune_command(action: DuneCommand, cache: &Cache, config_path: Op
         DuneCommand::LeaderFees { since } => {
             println!("Importing leader fees since {}...\n", since);
 
-            let fees = client.fetch_leader_fees(&since).await?;
+            let fees = client.fetch_leader_fees(&since, None).await?;
 
             if fees.is_empty() {
                 println!("No leader fees found.");
@@ -843,7 +866,7 @@ async fn handle_dune_command(action: DuneCommand, cache: &Cache, config_path: Op
         DuneCommand::VoteCosts { since } => {
             println!("Importing vote costs since {}...\n", since);
 
-            let costs = client.fetch_vote_costs(&since).await?;
+            let costs = client.fetch_vote_costs(&since, None).await?;
 
             if costs.is_empty() {
                 println!("No vote costs found.");
@@ -870,7 +893,7 @@ async fn handle_dune_command(action: DuneCommand, cache: &Cache, config_path: Op
         DuneCommand::Transfers { since } => {
             println!("Importing SOL transfers since {}...\n", since);
 
-            let transfers = client.fetch_transfers(&since).await?;
+            let transfers = client.fetch_transfers(&since, None).await?;
 
             if transfers.is_empty() {
                 println!("No transfers found.");
@@ -898,7 +921,7 @@ async fn handle_dune_command(action: DuneCommand, cache: &Cache, config_path: Op
 
             // Rewards
             println!("--- Inflation Rewards ---");
-            let rewards = client.fetch_inflation_rewards(&since).await?;
+            let rewards = client.fetch_inflation_rewards(&since, None).await?;
             if !rewards.is_empty() {
                 cache.store_epoch_rewards(&rewards).await?;
                 println!(
@@ -912,7 +935,7 @@ async fn handle_dune_command(action: DuneCommand, cache: &Cache, config_path: Op
 
             // Leader fees
             println!("--- Leader Fees ---");
-            let fees = client.fetch_leader_fees(&since).await?;
+            let fees = client.fetch_leader_fees(&since, None).await?;
             if !fees.is_empty() {
                 cache.store_leader_fees(&fees).await?;
                 println!(
@@ -926,7 +949,7 @@ async fn handle_dune_command(action: DuneCommand, cache: &Cache, config_path: Op
 
             // Vote costs
             println!("--- Vote Costs ---");
-            let costs = client.fetch_vote_costs(&since).await?;
+            let costs = client.fetch_vote_costs(&since, None).await?;
             if !costs.is_empty() {
                 cache.store_vote_costs(&costs).await?;
                 println!(
@@ -940,7 +963,7 @@ async fn handle_dune_command(action: DuneCommand, cache: &Cache, config_path: Op
 
             // Transfers
             println!("--- SOL Transfers ---");
-            let transfers = client.fetch_transfers(&since).await?;
+            let transfers = client.fetch_transfers(&since, None).await?;
             if !transfers.is_empty() {
                 cache.store_transfers(&transfers).await?;
                 println!("  Imported {} transfers\n", transfers.len());
@@ -962,6 +985,7 @@ async fn handle_position_command(action: PositionCommand, cache: &Cache, config_
     let config = config::Config::from_file(&file_config, None)?;
     let rpc_client = rpc::new_rpc_client(&config.rpc_url, CommitmentConfig::confirmed());
     let current_epoch = rpc_client.get_epoch_info()?.epoch;
+    let dune_api_key = file_config.api_keys.dune.as_deref();
 
     match action {
         PositionCommand::Now => {
@@ -973,8 +997,10 @@ async fn handle_position_command(action: PositionCommand, cache: &Cache, config_
             let (balances, snapshot_slot) = positions::fetch_all_balances_atomic(&rpc_client, &config).await?;
             let block_time = rpc_client.get_block_time(snapshot_slot).ok();
 
-            // Fetch jitoSOL balance and rate
-            let jitosol_lamports = positions::fetch_jitosol_balance(&rpc_client, &config.identity).await?;
+            // Fetch jitoSOL balance (identity + withdraw authority) and rate
+            let jitosol_lamports =
+                positions::fetch_jitosol_balance_total(&rpc_client, &[config.identity, config.withdraw_authority])
+                    .await?;
             let jitosol_rate = positions::fetch_jitosol_exchange_rate(&rpc_client).await?;
 
             // Discover stake accounts (using snapshot_slot for consistency tracking)
@@ -986,10 +1012,34 @@ async fn handle_position_command(action: PositionCommand, cache: &Cache, config_
             // Ensure vote costs exist for reconciliation (at least estimates).
             // Without this, reconciliation can miss a major on-chain expense driver.
             let completed_end = current_epoch.saturating_sub(1);
+
+            // Make `position` commands standalone: pull any missing on-chain sources into the cache
+            // so reconciliation isn't dependent on having run the full report workflow.
+            sync_reconciliation_cache(
+                cache,
+                &config,
+                config.first_reward_epoch,
+                completed_end,
+                current_epoch,
+                dune_api_key,
+            )
+            .await?;
+
             ensure_vote_costs_cached(cache, config.first_reward_epoch, completed_end).await?;
+            ensure_stake_rewards_cached(
+                cache,
+                &config,
+                &stake_accounts,
+                config.first_reward_epoch,
+                completed_end,
+            )
+            .await?;
+            ensure_jitosol_token_flows_cached(cache, &config).await?;
 
             // Fetch actual income/expense data from cache
-            let income_data = cache.get_reconciliation_data(&config).await?;
+            let income_data = cache
+                .get_reconciliation_data_at_slot(&config, jitosol_rate, snapshot_slot)
+                .await?;
 
             let position = positions::build_position_snapshot(
                 &balances,
@@ -997,6 +1047,7 @@ async fn handle_position_command(action: PositionCommand, cache: &Cache, config_
                 jitosol_lamports,
                 jitosol_rate,
                 &income_data,
+                config.initial_treasury_lamports,
                 snapshot_slot,
                 block_time.unwrap_or(0),
             );
@@ -1017,11 +1068,28 @@ async fn handle_position_command(action: PositionCommand, cache: &Cache, config_
             println!("  {}", "-".repeat(55));
 
             for balance in &balances {
+                if !matches!(
+                    balance.account_type,
+                    positions::AccountType::VoteAccount
+                        | positions::AccountType::Identity
+                        | positions::AccountType::WithdrawAuthority
+                ) {
+                    continue;
+                }
                 println!(
                     "  {:25} {:>15} {:>15}",
                     balance.account_type.to_string(),
                     format!("{:.4} SOL", balance.balance_sol()),
                     format!("{:.4} SOL", balance.withdrawable_sol()),
+                );
+            }
+
+            if position.token_accounts_lamports > 0 {
+                println!("\nToken Accounts (ATAs):");
+                println!(
+                    "  Total: {} SOL (withdrawable: {} SOL)",
+                    positions::lamports_to_sol_string(position.token_accounts_lamports, 4),
+                    positions::lamports_to_sol_string(position.token_accounts_withdrawable_lamports, 4)
                 );
             }
 
@@ -1100,17 +1168,41 @@ async fn handle_position_command(action: PositionCommand, cache: &Cache, config_
             // Fetch current position
             let (balances, snapshot_slot) = positions::fetch_all_balances_atomic(&rpc_client, &config).await?;
             let block_time = rpc_client.get_block_time(snapshot_slot).ok();
-            let jitosol_lamports = positions::fetch_jitosol_balance(&rpc_client, &config.identity).await?;
+            let jitosol_lamports =
+                positions::fetch_jitosol_balance_total(&rpc_client, &[config.identity, config.withdraw_authority])
+                    .await?;
             let jitosol_rate = positions::fetch_jitosol_exchange_rate(&rpc_client).await?;
             let stake_accounts =
                 positions::discover_stake_accounts(&rpc_client, &config.withdraw_authority, snapshot_slot).await?;
             cache.store_stake_accounts(&stake_accounts).await?;
 
             let completed_end = current_epoch.saturating_sub(1);
+
+            sync_reconciliation_cache(
+                cache,
+                &config,
+                config.first_reward_epoch,
+                completed_end,
+                current_epoch,
+                dune_api_key,
+            )
+            .await?;
+
             ensure_vote_costs_cached(cache, config.first_reward_epoch, completed_end).await?;
+            ensure_stake_rewards_cached(
+                cache,
+                &config,
+                &stake_accounts,
+                config.first_reward_epoch,
+                completed_end,
+            )
+            .await?;
+            ensure_jitosol_token_flows_cached(cache, &config).await?;
 
             // Fetch actual income/expense data from cache
-            let income_data = cache.get_reconciliation_data(&config).await?;
+            let income_data = cache
+                .get_reconciliation_data_at_slot(&config, jitosol_rate, snapshot_slot)
+                .await?;
 
             let position = positions::build_position_snapshot(
                 &balances,
@@ -1118,6 +1210,7 @@ async fn handle_position_command(action: PositionCommand, cache: &Cache, config_
                 jitosol_lamports,
                 jitosol_rate,
                 &income_data,
+                config.initial_treasury_lamports,
                 snapshot_slot,
                 block_time.unwrap_or(0),
             );
@@ -1125,6 +1218,13 @@ async fn handle_position_command(action: PositionCommand, cache: &Cache, config_
             let reconciliation = positions::reconcile(&position);
 
             println!("Cash Flow Analysis:");
+            if config.initial_treasury_lamports > 0 {
+                println!(
+                    "  Starting balance:    {} SOL (at bootstrap_date {})",
+                    positions::lamports_to_sol_string(config.initial_treasury_lamports, 4),
+                    config.bootstrap_date
+                );
+            }
             println!(
                 "  Lifetime income:     {} SOL",
                 positions::lamports_to_sol_string(position.lifetime_income_lamports, 4)
@@ -1141,6 +1241,25 @@ async fn handle_position_command(action: PositionCommand, cache: &Cache, config_
                 "  Lifetime deposits:   {} SOL",
                 positions::lamports_to_sol_string(position.lifetime_deposits_lamports, 4)
             );
+            if income_data.token_deposits_lamports > 0 {
+                println!(
+                    "  (includes token deposits: {} SOL-equiv in jitoSOL transfers)",
+                    positions::lamports_to_sol_string(income_data.token_deposits_lamports, 4)
+                );
+            }
+            // DoubleZero liabilities are accruals, not cash outflows, so they are not part of
+            // `Lifetime expenses` above. Show them separately for transparency.
+            let snapshot_epoch = snapshot_slot / constants::SLOTS_PER_EPOCH;
+            if let Ok(dz_liability) = cache
+                .get_total_doublezero_liability_lamports_up_to(snapshot_epoch)
+                .await
+                && dz_liability > 0
+            {
+                println!(
+                    "  DoubleZero liability (accrued): {} SOL",
+                    positions::lamports_to_sol_string(dz_liability, 4)
+                );
+            }
             println!();
             println!(
                 "  Net cash flow:       {} SOL",
@@ -1150,6 +1269,27 @@ async fn handle_position_command(action: PositionCommand, cache: &Cache, config_
                 "  LST appreciation:    {} SOL",
                 positions::signed_lamports_to_sol_string(reconciliation.lst_adjustment_lamports, 4)
             );
+            if position.net_cash_flow_lamports != position.expected_balance_lamports {
+                // This is an internal reconciliation helper; it will be 0 in the common case.
+                let internal_adj = position
+                    .expected_balance_lamports
+                    .saturating_sub(position.net_cash_flow_lamports)
+                    .saturating_sub(position.lst_appreciation_lamports)
+                    .saturating_sub(config.initial_treasury_lamports.min(i64::MAX as u64) as i64);
+                if internal_adj != 0 {
+                    println!(
+                        "  Internal adjustments: {} SOL",
+                        positions::signed_lamports_to_sol_string(internal_adj, 4)
+                    );
+                }
+            }
+            if position.token_accounts_lamports > 0 {
+                println!(
+                    "  Token accounts:      {} SOL (withdrawable: {} SOL)",
+                    positions::lamports_to_sol_string(position.token_accounts_lamports, 4),
+                    positions::lamports_to_sol_string(position.token_accounts_withdrawable_lamports, 4)
+                );
+            }
             println!();
             println!("Reconciliation:");
             println!(
@@ -1188,9 +1328,6 @@ async fn handle_position_command(action: PositionCommand, cache: &Cache, config_
                 internal_addresses.extend(positions::compute_common_atas(wallet));
             }
 
-            // Add known DeFi protocol addresses (Jupiter, Raydium, etc.)
-            // These are intermediate routing, not true external destinations
-            internal_addresses.extend(crate::addresses::get_defi_protocol_addresses());
             let transfer_summary = cache.get_external_transfer_summary(&internal_addresses).await?;
             if !transfer_summary.deposits_in.is_empty() || !transfer_summary.withdrawals_out.is_empty() {
                 println!("\nTracked External Transfers:");
@@ -1229,12 +1366,151 @@ async fn handle_position_command(action: PositionCommand, cache: &Cache, config_
             }
 
             if reconciliation.status == positions::ReconciliationStatus::Variance {
+                if jitosol_lamports > 0 {
+                    println!("\njitoSOL Diagnostics:");
+                    println!(
+                        "  Current treasury jitoSOL: {} jitoSOL ({} SOL @ {:.4})",
+                        positions::lamports_to_sol_string(jitosol_lamports, 6),
+                        positions::lamports_to_sol_string(position.jitosol_sol_equivalent, 4),
+                        jitosol_rate
+                    );
+
+                    match summarize_recent_jitosol_inflows(&config.rpc_url, &config.identity, 20).await {
+                        Ok((count, total_in, sol_delta)) => {
+                            println!(
+                                "  Recent inbound jitoSOL txs (last 20 sigs): {} tx, {} jitoSOL total",
+                                count,
+                                positions::lamports_to_sol_string(total_in, 6)
+                            );
+                            println!(
+                                "  Identity SOL delta across those txs: {} SOL (fees/rent show up here)",
+                                positions::signed_lamports_to_sol_string(sol_delta, 6)
+                            );
+                            println!(
+                                "  Note: SPL-token movements (like jitoSOL transfers/mints) are included in assets (via current balance) but only partially included in income.\n  If you actively swap SOL into other SPL tokens (USDC, etc.) those holdings are not currently included in assets, which can still cause reconciliation variance."
+                            );
+                        }
+                        Err(e) => {
+                            println!("  (Failed to analyze recent jitoSOL inflows: {})", e);
+                        }
+                    }
+                }
+
                 println!("\nNote: Variance may be due to:");
                 println!("  - Untracked deposits or withdrawals");
                 println!("  - jitoSOL rate fluctuation");
                 println!("  - Missing expense records");
                 println!("  - Transaction fees not captured");
+
+                if config.initial_treasury_lamports == 0 && reconciliation.difference_lamports > 0 {
+                    println!();
+                    println!(
+                        "Hint: If you already had SOL in the validator treasury on bootstrap_date ({}),\n  set `validator.initial_treasury_sol` in config.toml to that starting amount.\n  (Current unexplained surplus vs expected: {} SOL.)",
+                        config.bootstrap_date,
+                        positions::signed_lamports_to_sol_string(reconciliation.difference_lamports, 4)
+                    );
+                }
             }
+
+            Ok(())
+        }
+
+        PositionCommand::Explain => {
+            println!("Position Reconciliation Explain");
+            println!("===============================\n");
+
+            let (balances, snapshot_slot) = positions::fetch_all_balances_atomic(&rpc_client, &config).await?;
+            let block_time = rpc_client.get_block_time(snapshot_slot).ok();
+
+            let jitosol_lamports =
+                positions::fetch_jitosol_balance_total(&rpc_client, &[config.identity, config.withdraw_authority])
+                    .await?;
+            let jitosol_rate = positions::fetch_jitosol_exchange_rate(&rpc_client).await?;
+
+            let stake_accounts =
+                positions::discover_stake_accounts(&rpc_client, &config.withdraw_authority, snapshot_slot).await?;
+            cache.store_stake_accounts(&stake_accounts).await?;
+
+            let completed_end = current_epoch.saturating_sub(1);
+            sync_reconciliation_cache(
+                cache,
+                &config,
+                config.first_reward_epoch,
+                completed_end,
+                current_epoch,
+                dune_api_key,
+            )
+            .await?;
+
+            ensure_vote_costs_cached(cache, config.first_reward_epoch, completed_end).await?;
+            ensure_stake_rewards_cached(
+                cache,
+                &config,
+                &stake_accounts,
+                config.first_reward_epoch,
+                completed_end,
+            )
+            .await?;
+            ensure_jitosol_token_flows_cached(cache, &config).await?;
+
+            // Diagnostics-only: try an incremental Dune transfer sync (bounded by min_slot) to catch
+            // vote/identity transfers that RPC signature scanning would never see.
+            let dune_sync_ran = maybe_sync_dune_transfers_incremental(cache, &config, dune_api_key, snapshot_slot)
+                .await
+                .unwrap_or(false);
+
+            let income_data = cache
+                .get_reconciliation_data_at_slot(&config, jitosol_rate, snapshot_slot)
+                .await?;
+
+            let position = positions::build_position_snapshot(
+                &balances,
+                &stake_accounts,
+                jitosol_lamports,
+                jitosol_rate,
+                &income_data,
+                config.initial_treasury_lamports,
+                snapshot_slot,
+                block_time.unwrap_or(0),
+            );
+
+            let reconciliation = positions::reconcile(&position);
+
+            println!(
+                "Snapshot at slot {} ({})",
+                snapshot_slot,
+                block_time
+                    .and_then(|t| chrono::DateTime::from_timestamp(t, 0))
+                    .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                    .unwrap_or_else(|| "-".to_string())
+            );
+            println!(
+                "Reconciliation status: {} (difference: {} SOL)\n",
+                reconciliation.status,
+                positions::signed_lamports_to_sol_string(reconciliation.difference_lamports, 4)
+            );
+
+            if dune_api_key.is_some() {
+                println!(
+                    "Dune transfer incremental sync: {}",
+                    if dune_sync_ran { "ran" } else { "skipped" }
+                );
+            } else {
+                println!("Dune transfer incremental sync: unavailable (no Dune API key configured)");
+            }
+
+            if config.initial_treasury_lamports == 0 && reconciliation.difference_lamports > 0 {
+                let suggested = reconciliation.difference_lamports as f64 / constants::LAMPORTS_PER_SOL_U64 as f64;
+                println!();
+                println!(
+                    "Suggested baseline:\n  Set `validator.initial_treasury_sol` to ~{:.4} to close the current surplus.\n  (Only do this if you actually had that SOL already in the treasury on bootstrap_date {}.)",
+                    suggested, config.bootstrap_date
+                );
+            }
+
+            println!();
+            println!("Untracked SPL Tokens (diagnostic):");
+            print_spl_token_summary(&config.rpc_url, &config, 8).await?;
 
             Ok(())
         }
@@ -1314,12 +1590,12 @@ async fn handle_position_command(action: PositionCommand, cache: &Cache, config_
 
 /// Prepare Dune Analytics fallback for epochs that RPC couldn't fetch.
 /// Returns None if no fallback is needed or possible.
-/// Returns Some((client, start_date)) if ready to attempt Dune fetch.
+/// Returns Some((client, start_date, min_slot)) if ready to attempt Dune fetch.
 fn prepare_dune_fallback(
     rpc_failures: &[u64],
     dune_api_key: Option<&str>,
     config: &config::Config,
-) -> Option<(dune::DuneClient, String)> {
+) -> Option<(dune::DuneClient, String, Option<u64>)> {
     if rpc_failures.is_empty() {
         return None;
     }
@@ -1331,9 +1607,13 @@ fn prepare_dune_fallback(
                 rpc_failures.len()
             );
             let earliest_epoch = *rpc_failures.iter().min().unwrap();
-            let start_date = dune_start_date_with_buffer(earliest_epoch, &config.bootstrap_date);
+            let (start_date, min_slot) = dune_fallback_bounds(earliest_epoch, &config.rpc_url, &config.bootstrap_date);
+            println!(
+                "    Dune fallback bounds: start_date={}, min_slot={:?}",
+                start_date, min_slot
+            );
             let client = dune::DuneClient::new(api_key.to_string(), config);
-            Some((client, start_date))
+            Some((client, start_date, min_slot))
         }
         None => {
             eprintln!(
@@ -1345,24 +1625,42 @@ fn prepare_dune_fallback(
     }
 }
 
-fn dune_start_date_with_buffer(earliest_epoch: u64, bootstrap_date: &str) -> String {
-    // epoch_to_date() is approximate; include a safety buffer so we don't start too late.
-    const BUFFER_DAYS: i64 = 7;
+fn dune_fallback_bounds(earliest_epoch: u64, rpc_url: &str, bootstrap_date: &str) -> (String, Option<u64>) {
+    // For Dune cost control we keep a block_date predicate, but the start_date must not
+    // be too late (or we can silently miss rows). Prefer deriving the date from on-chain
+    // block_time at the epoch start slot. If that fails, fall back to bootstrap_date for
+    // correctness (can be more expensive, but safe).
+    const RPC_DATE_BUFFER_DAYS: i64 = 2;
 
-    let derived = transactions::epoch_to_date(earliest_epoch);
-    let Ok(derived_date) = chrono::NaiveDate::parse_from_str(&derived, "%Y-%m-%d") else {
-        return derived;
+    let min_slot = earliest_epoch.checked_mul(constants::SLOTS_PER_EPOCH);
+
+    let start_date = if let Some(slot) = min_slot {
+        let client = rpc::new_rpc_client(rpc_url, CommitmentConfig::confirmed());
+
+        // Probe a handful of offsets; some slots may not have a block_time available.
+        let offsets = [0_u64, 500, 2_000, 10_000];
+        let mut chosen: Option<chrono::NaiveDate> = None;
+        for offset in offsets {
+            match client.get_block_time(slot.saturating_add(offset)) {
+                Ok(ts) => {
+                    if let Some(dt) = chrono::DateTime::from_timestamp(ts, 0) {
+                        chosen = Some(dt.date_naive() - chrono::Duration::days(RPC_DATE_BUFFER_DAYS));
+                        break;
+                    }
+                }
+                Err(_) => continue,
+            }
+        }
+
+        match chosen {
+            Some(date) => date.format("%Y-%m-%d").to_string(),
+            None => bootstrap_date.to_string(),
+        }
+    } else {
+        bootstrap_date.to_string()
     };
 
-    let buffered = derived_date - chrono::Duration::days(BUFFER_DAYS);
-
-    // Avoid querying far before the validator existed (limits Dune query size).
-    let floored = match chrono::NaiveDate::parse_from_str(bootstrap_date, "%Y-%m-%d") {
-        Ok(boot) => buffered.max(boot),
-        Err(_) => buffered,
-    };
-
-    floored.format("%Y-%m-%d").to_string()
+    (start_date, min_slot)
 }
 
 /// Parse expense category from string
@@ -1390,6 +1688,17 @@ fn truncate(s: &str, max_len: usize) -> String {
     }
 }
 
+fn parse_yyyy_mm_dd(field: &str, value: &str) -> Result<NaiveDate> {
+    NaiveDate::parse_from_str(value, "%Y-%m-%d")
+        .with_context(|| format!("Invalid {} '{}'. Expected YYYY-MM-DD.", field, value))
+}
+
+fn month_key_from_date(date: &str) -> Option<String> {
+    NaiveDate::parse_from_str(date, "%Y-%m-%d")
+        .ok()
+        .map(|d| d.format("%Y-%m").to_string())
+}
+
 async fn ensure_vote_costs_cached(cache: &Cache, start_epoch: u64, end_epoch: u64) -> Result<()> {
     if end_epoch < start_epoch {
         return Ok(());
@@ -1410,6 +1719,640 @@ async fn ensure_vote_costs_cached(cache: &Cache, start_epoch: u64, end_epoch: u6
     }
 
     Ok(())
+}
+
+async fn ensure_stake_rewards_cached(
+    cache: &Cache,
+    config: &config::Config,
+    stake_accounts: &[positions::StakeAccountInfo],
+    start_epoch: u64,
+    end_epoch: u64,
+) -> Result<()> {
+    use std::collections::HashSet;
+
+    if stake_accounts.is_empty() || end_epoch < start_epoch {
+        return Ok(());
+    }
+
+    let existing = cache.get_stake_reward_keys(start_epoch, end_epoch).await?;
+    let stake_pubkeys: Vec<Pubkey> = stake_accounts.iter().map(|s| s.account).collect();
+
+    let rpc_client = rpc::new_rpc_client(&config.rpc_url, CommitmentConfig::confirmed());
+
+    // Keep this modest to avoid RPC limits; also matches typical JSON payload size limits.
+    const CHUNK_SIZE: usize = 64;
+
+    let mut to_store: Vec<transactions::StakeEpochReward> = Vec::new();
+    let mut epochs_with_missing: HashSet<u64> = HashSet::new();
+
+    for epoch in start_epoch..=end_epoch {
+        let missing: Vec<Pubkey> = stake_pubkeys
+            .iter()
+            .copied()
+            .filter(|pk| !existing.contains(&format!("{}:{}", epoch, pk)))
+            .collect();
+
+        if missing.is_empty() {
+            continue;
+        }
+        epochs_with_missing.insert(epoch);
+
+        // Rate limiting (best-effort) so we don't hammer RPC.
+        tokio::time::sleep(std::time::Duration::from_millis(constants::EPOCH_REWARD_DELAY_MS)).await;
+
+        for chunk in missing.chunks(CHUNK_SIZE) {
+            match rpc_client.get_inflation_reward(chunk, Some(epoch)) {
+                Ok(rewards) => {
+                    for (i, pk) in chunk.iter().enumerate() {
+                        let amount_lamports = rewards.get(i).and_then(|r| r.as_ref()).map(|r| r.amount).unwrap_or(0);
+
+                        // Store 0 for epochs/accounts that have no reward (prevents re-query loops).
+                        to_store.push(transactions::StakeEpochReward {
+                            epoch,
+                            stake_account: *pk,
+                            amount_lamports,
+                        });
+                    }
+                }
+                Err(e) => {
+                    eprintln!("    Warning: failed to fetch stake rewards for epoch {}: {}", epoch, e);
+                }
+            }
+        }
+    }
+
+    if !epochs_with_missing.is_empty() {
+        println!(
+            "    Backfilling stake inflation rewards for {} epoch(s) across {} stake account(s)...",
+            epochs_with_missing.len(),
+            stake_pubkeys.len()
+        );
+    }
+
+    cache.store_stake_rewards(&to_store).await?;
+    Ok(())
+}
+
+async fn ensure_jitosol_token_flows_cached(cache: &Cache, config: &config::Config) -> Result<()> {
+    // Token flows are best-effort: if this fails, reconciliation still runs, but LST income may be undercounted.
+    let client = reqwest_012::Client::builder()
+        .timeout(Duration::from_secs(45))
+        .build()
+        .context("Failed to build JSON-RPC client")?;
+
+    let mint = Pubkey::from_str(constants::JITOSOL_MINT).expect("Invalid JITOSOL_MINT constant");
+    // Track both identity + withdraw authority. Deduplicate if they are the same pubkey.
+    let mut owners: Vec<Pubkey> = vec![config.identity, config.withdraw_authority];
+    owners.sort();
+    owners.dedup();
+
+    for owner in owners {
+        let owner_str = owner.to_string();
+
+        let token_accounts: RpcTokenAccountsByOwnerResult = rpc_call(
+            &client,
+            &config.rpc_url,
+            "getTokenAccountsByOwner",
+            serde_json::json!([owner_str, {"mint": constants::JITOSOL_MINT}, {"encoding":"jsonParsed"}]),
+        )
+        .await?;
+
+        if token_accounts.value.is_empty() {
+            continue;
+        }
+
+        for ta in token_accounts.value {
+            let token_account = ta.pubkey;
+            let progress_key = format!("token:jitosol:{}:{}", owner, token_account);
+            let stop_at_slot = cache.get_account_progress(&progress_key).await?;
+
+            // We'll try to match token-balance deltas by accountIndex (most reliable). Some RPC providers
+            // omit the `owner` field in token balance entries, so owner-only matching can silently
+            // miss everything.
+            let mut before: Option<String> = None;
+            let mut highest_slot_seen: Option<u64> = None;
+            let mut new_flows: Vec<transactions::TokenFlow> = Vec::new();
+
+            loop {
+                let mut cfg = serde_json::Map::new();
+                cfg.insert("limit".to_string(), serde_json::json!(100));
+                if let Some(ref b) = before {
+                    cfg.insert("before".to_string(), serde_json::json!(b));
+                }
+
+                let batch: Vec<RpcSignatureInfo> = rpc_call(
+                    &client,
+                    &config.rpc_url,
+                    "getSignaturesForAddress",
+                    serde_json::json!([token_account, serde_json::Value::Object(cfg)]),
+                )
+                .await?;
+
+                if batch.is_empty() {
+                    break;
+                }
+
+                for sig in &batch {
+                    highest_slot_seen = Some(highest_slot_seen.map_or(sig.slot, |h| h.max(sig.slot)));
+
+                    if let Some(stop) = stop_at_slot
+                        && sig.slot <= stop
+                    {
+                        // We've hit cached history.
+                        before = None;
+                        break;
+                    }
+
+                    let tx: RpcTransactionResult = rpc_call(
+                        &client,
+                        &config.rpc_url,
+                        "getTransaction",
+                        serde_json::json!([sig.signature, {"encoding":"jsonParsed","maxSupportedTransactionVersion":0}]),
+                    )
+                    .await?;
+
+                    let Some(meta) = tx.meta else { continue };
+
+                    let pre_tb = meta.pre_token_balances.as_deref().unwrap_or(&[]);
+                    let post_tb = meta.post_token_balances.as_deref().unwrap_or(&[]);
+
+                    let token_account_index = tx
+                        .transaction
+                        .message
+                        .account_keys
+                        .iter()
+                        .position(|k| k.pubkey == token_account);
+
+                    let pre: i128 = pre_tb
+                        .iter()
+                        .filter(|b| b.mint == constants::JITOSOL_MINT)
+                        .filter(|b| {
+                            token_account_index.is_some_and(|i| b.account_index == i)
+                                || b.owner.as_deref() == Some(&owner_str)
+                        })
+                        .filter_map(|b| b.ui_token_amount.amount.parse::<i128>().ok())
+                        .sum();
+                    let post: i128 = post_tb
+                        .iter()
+                        .filter(|b| b.mint == constants::JITOSOL_MINT)
+                        .filter(|b| {
+                            token_account_index.is_some_and(|i| b.account_index == i)
+                                || b.owner.as_deref() == Some(&owner_str)
+                        })
+                        .filter_map(|b| b.ui_token_amount.amount.parse::<i128>().ok())
+                        .sum();
+
+                    let delta = post.saturating_sub(pre);
+                    if delta == 0 {
+                        continue;
+                    }
+
+                    let idx = tx
+                        .transaction
+                        .message
+                        .account_keys
+                        .iter()
+                        .position(|k| k.pubkey == owner_str);
+
+                    let owner_sol_delta_lamports = if let Some(i) = idx
+                        && i < meta.pre_balances.len()
+                        && i < meta.post_balances.len()
+                    {
+                        meta.post_balances[i].saturating_sub(meta.pre_balances[i])
+                    } else {
+                        0
+                    };
+
+                    new_flows.push(transactions::TokenFlow {
+                        signature: sig.signature.clone(),
+                        slot: sig.slot,
+                        timestamp: tx.block_time,
+                        owner,
+                        mint,
+                        delta_amount: delta.clamp(i64::MIN as i128, i64::MAX as i128) as i64,
+                        owner_sol_delta_lamports,
+                    });
+                }
+
+                // Stop pagination if we broke due to stop_at_slot.
+                if before.is_none() {
+                    break;
+                }
+
+                before = batch.last().map(|b| b.signature.clone());
+                tokio::time::sleep(Duration::from_millis(constants::RPC_SIGNATURE_DELAY_MS)).await;
+            }
+
+            if !new_flows.is_empty() {
+                cache.store_token_flows(&new_flows).await?;
+            }
+
+            // Store progress even if no flows were found: we still looked at these signatures.
+            if let Some(highest) = highest_slot_seen {
+                cache.set_account_progress(&progress_key, highest).await?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Make `position` commands standalone by ensuring the cache contains the on-chain sources
+/// used in reconciliation (income/expenses/transfers) for the desired epoch range.
+async fn sync_reconciliation_cache(
+    cache: &Cache,
+    config: &config::Config,
+    start_epoch: u64,
+    end_epoch: u64,
+    current_epoch: u64,
+    dune_api_key: Option<&str>,
+) -> Result<()> {
+    // Inflation rewards (epoch rewards)
+    let _ = fetch_rewards_with_cache(
+        cache,
+        config,
+        start_epoch,
+        end_epoch,
+        current_epoch,
+        false,
+        dune_api_key,
+    )
+    .await?;
+
+    // Leader fees (slow, but cached per epoch)
+    let leader_fees = fetch_leader_fees_with_cache(
+        cache,
+        config,
+        start_epoch,
+        end_epoch,
+        current_epoch,
+        false,
+        dune_api_key,
+    )
+    .await
+    .unwrap_or_default();
+
+    // DoubleZero liabilities are derived from leader fees; keep them consistent.
+    if config.doublezero_enabled {
+        let fees = doublezero::compute_fees(config, &leader_fees, start_epoch, end_epoch, current_epoch);
+        if !fees.is_empty() {
+            cache.store_doublezero_fees(&fees).await?;
+        }
+    }
+
+    // MEV claims (cached)
+    let _ = fetch_mev_with_cache(cache, config, start_epoch, end_epoch, current_epoch, false)
+        .await
+        .unwrap_or_default();
+
+    // SOL transfers (cached)
+    let _ = fetch_transfers_with_cache(cache, config, false, false, dune_api_key, &config.bootstrap_date).await?;
+
+    Ok(())
+}
+
+async fn maybe_sync_dune_transfers_incremental(
+    cache: &Cache,
+    config: &config::Config,
+    dune_api_key: Option<&str>,
+    snapshot_slot: u64,
+) -> Result<bool> {
+    let Some(api_key) = dune_api_key else {
+        return Ok(false);
+    };
+
+    let progress_key = "dune:transfers";
+    let last_progress = cache.get_account_progress(progress_key).await?.unwrap_or(0);
+    let last_cached_slot = cache.get_max_sol_transfer_slot().await?.unwrap_or(0);
+
+    let start_from = last_progress.max(last_cached_slot).saturating_add(1);
+    if start_from == 0 || start_from > snapshot_slot {
+        return Ok(false);
+    }
+
+    // Avoid re-running Dune transfer sync too frequently if snapshot slots aren't moving.
+    if last_progress >= snapshot_slot.saturating_sub(1) {
+        return Ok(false);
+    }
+
+    let epoch = start_from / constants::SLOTS_PER_EPOCH;
+    let (start_date, _min_slot_guard) = dune_fallback_bounds(epoch, &config.rpc_url, &config.bootstrap_date);
+
+    let dune_client = dune::DuneClient::new(api_key.to_string(), config);
+    let transfers = match dune_client.fetch_transfers(&start_date, Some(start_from)).await {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("  Warning: incremental Dune transfer sync failed: {}", e);
+            return Ok(false);
+        }
+    };
+    if transfers.is_empty() {
+        cache.set_account_progress(progress_key, snapshot_slot).await?;
+        return Ok(false);
+    }
+
+    let filtered: Vec<_> = transfers.into_iter().filter(|t| t.slot <= snapshot_slot).collect();
+    if filtered.is_empty() {
+        cache.set_account_progress(progress_key, snapshot_slot).await?;
+        return Ok(false);
+    }
+
+    cache.store_transfers(&filtered).await?;
+    let max_seen = filtered.iter().map(|t| t.slot).max().unwrap_or(snapshot_slot);
+    cache.set_account_progress(progress_key, max_seen).await?;
+
+    Ok(true)
+}
+
+async fn print_spl_token_summary(rpc_url: &str, config: &config::Config, top_n: usize) -> Result<()> {
+    let client = reqwest_012::Client::builder()
+        .timeout(Duration::from_secs(45))
+        .build()
+        .context("Failed to build JSON-RPC client")?;
+
+    // Only show tokens for core owners (personal wallet is intentionally excluded from position).
+    let owners = [
+        ("identity", config.identity),
+        ("withdraw_authority", config.withdraw_authority),
+    ];
+
+    let mut all_tokens: Vec<(String, String, f64)> = Vec::new(); // (owner_label, mint, ui_amount)
+
+    for (label, owner) in owners {
+        let owner_str = owner.to_string();
+
+        let resp: RpcTokenAccountsByOwnerParsed = rpc_call(
+            &client,
+            rpc_url,
+            "getTokenAccountsByOwner",
+            serde_json::json!([
+                owner_str,
+                { "programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" },
+                { "encoding": "jsonParsed" }
+            ]),
+        )
+        .await?;
+
+        for v in resp.value {
+            let mint = v.account.data.parsed.info.mint.unwrap_or_else(|| "unknown".to_string());
+            let ui_amount = v.account.data.parsed.info.token_amount.ui_amount.unwrap_or(0.0);
+
+            if ui_amount == 0.0 {
+                continue;
+            }
+            all_tokens.push((label.to_string(), mint, ui_amount));
+        }
+    }
+
+    if all_tokens.is_empty() {
+        println!("  (no non-zero token balances found via RPC)");
+        return Ok(());
+    }
+
+    all_tokens.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+    all_tokens.truncate(top_n.max(1));
+
+    for (owner_label, mint, ui_amount) in all_tokens {
+        let note = if mint == crate::positions::token_mints::WRAPPED_SOL {
+            "wSOL (value should be included via token-account lamports)"
+        } else if mint == crate::positions::token_mints::USDC {
+            "USDC (not included in assets)"
+        } else if mint == crate::positions::token_mints::MSOL {
+            "mSOL (not included in assets)"
+        } else if mint == crate::positions::token_mints::JITOSOL {
+            "jitoSOL (included via jitoSOL balance)"
+        } else {
+            "not included in assets"
+        };
+
+        println!("  {}: {} -> {:.6} ({})", owner_label, mint, ui_amount, note);
+    }
+
+    Ok(())
+}
+
+#[derive(serde::Deserialize)]
+struct JsonRpcError {
+    message: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct JsonRpcResponse<T> {
+    result: Option<T>,
+    error: Option<JsonRpcError>,
+}
+
+#[derive(serde::Deserialize)]
+struct RpcSignatureInfo {
+    signature: String,
+    slot: u64,
+}
+
+#[derive(serde::Deserialize)]
+struct RpcTokenAccountEntry {
+    pubkey: String,
+}
+
+#[derive(serde::Deserialize)]
+struct RpcTokenAccountsByOwnerResult {
+    value: Vec<RpcTokenAccountEntry>,
+}
+
+#[derive(serde::Deserialize)]
+struct RpcUiTokenAmountParsed {
+    #[serde(rename = "uiAmount")]
+    ui_amount: Option<f64>,
+}
+
+#[derive(serde::Deserialize)]
+struct RpcTokenAccountParsedInfo {
+    mint: Option<String>,
+    #[serde(rename = "tokenAmount")]
+    token_amount: RpcUiTokenAmountParsed,
+}
+
+#[derive(serde::Deserialize)]
+struct RpcTokenAccountParsedData {
+    parsed: RpcTokenAccountParsedWrapper,
+}
+
+#[derive(serde::Deserialize)]
+struct RpcTokenAccountParsedWrapper {
+    info: RpcTokenAccountParsedInfo,
+}
+
+#[derive(serde::Deserialize)]
+struct RpcTokenAccountParsedAccount {
+    data: RpcTokenAccountParsedData,
+}
+
+#[derive(serde::Deserialize)]
+struct RpcTokenAccountParsedEntry {
+    account: RpcTokenAccountParsedAccount,
+}
+
+#[derive(serde::Deserialize)]
+struct RpcTokenAccountsByOwnerParsed {
+    value: Vec<RpcTokenAccountParsedEntry>,
+}
+
+#[derive(serde::Deserialize)]
+struct RpcUiTokenAmount {
+    amount: String,
+}
+
+#[derive(serde::Deserialize)]
+struct RpcTokenBalance {
+    mint: String,
+    owner: Option<String>,
+    #[serde(rename = "accountIndex")]
+    account_index: usize,
+    #[serde(rename = "uiTokenAmount")]
+    ui_token_amount: RpcUiTokenAmount,
+}
+
+#[derive(serde::Deserialize)]
+struct RpcAccountKey {
+    pubkey: String,
+}
+
+#[derive(serde::Deserialize)]
+struct RpcMessage {
+    #[serde(rename = "accountKeys")]
+    account_keys: Vec<RpcAccountKey>,
+}
+
+#[derive(serde::Deserialize)]
+struct RpcTransactionInner {
+    message: RpcMessage,
+}
+
+#[derive(serde::Deserialize)]
+struct RpcMeta {
+    #[serde(rename = "preBalances")]
+    pre_balances: Vec<i64>,
+    #[serde(rename = "postBalances")]
+    post_balances: Vec<i64>,
+    #[serde(rename = "preTokenBalances")]
+    pre_token_balances: Option<Vec<RpcTokenBalance>>,
+    #[serde(rename = "postTokenBalances")]
+    post_token_balances: Option<Vec<RpcTokenBalance>>,
+}
+
+#[derive(serde::Deserialize)]
+struct RpcTransactionResult {
+    meta: Option<RpcMeta>,
+    transaction: RpcTransactionInner,
+    #[serde(rename = "blockTime")]
+    block_time: Option<i64>,
+}
+
+async fn rpc_call<T: for<'de> serde::Deserialize<'de>>(
+    client: &reqwest_012::Client,
+    rpc_url: &str,
+    method: &str,
+    params: serde_json::Value,
+) -> Result<T> {
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": method,
+        "params": params,
+    });
+
+    let resp: JsonRpcResponse<T> = client.post(rpc_url).json(&body).send().await?.json().await?;
+
+    if let Some(err) = resp.error {
+        anyhow::bail!(err.message.unwrap_or_else(|| "Unknown JSON-RPC error".to_string()));
+    }
+
+    resp.result
+        .ok_or_else(|| anyhow::anyhow!("JSON-RPC response missing result for {}", method))
+}
+
+/// Best-effort diagnostic: how much jitoSOL has flowed into the identity's ATA recently.
+///
+/// This is used to explain reconciliation variance when LST token movements aren't captured by SOL transfers.
+async fn summarize_recent_jitosol_inflows(rpc_url: &str, identity: &Pubkey, limit: usize) -> Result<(usize, u64, i64)> {
+    let client = reqwest_012::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()?;
+
+    let identity_str = identity.to_string();
+
+    let token_accounts: RpcTokenAccountsByOwnerResult = rpc_call(
+        &client,
+        rpc_url,
+        "getTokenAccountsByOwner",
+        serde_json::json!([identity_str, {"mint": constants::JITOSOL_MINT}, {"encoding":"jsonParsed"}]),
+    )
+    .await?;
+
+    let Some(first) = token_accounts.value.first() else {
+        return Ok((0, 0, 0));
+    };
+    let ata = first.pubkey.clone();
+
+    let sigs: Vec<RpcSignatureInfo> = rpc_call(
+        &client,
+        rpc_url,
+        "getSignaturesForAddress",
+        serde_json::json!([ata, {"limit": limit}]),
+    )
+    .await?;
+
+    let mut count = 0usize;
+    let mut total_in_lamports: u64 = 0;
+    let mut total_identity_sol_delta: i64 = 0;
+
+    for s in sigs {
+        let tx: RpcTransactionResult = rpc_call(
+            &client,
+            rpc_url,
+            "getTransaction",
+            serde_json::json!([s.signature, {"encoding":"jsonParsed","maxSupportedTransactionVersion":0}]),
+        )
+        .await?;
+
+        let Some(meta) = tx.meta else { continue };
+        let pre_tb = meta.pre_token_balances.unwrap_or_default();
+        let post_tb = meta.post_token_balances.unwrap_or_default();
+
+        let pre: i128 = pre_tb
+            .iter()
+            .filter(|b| b.mint == constants::JITOSOL_MINT && b.owner.as_deref() == Some(&identity_str))
+            .filter_map(|b| b.ui_token_amount.amount.parse::<i128>().ok())
+            .sum();
+        let post: i128 = post_tb
+            .iter()
+            .filter(|b| b.mint == constants::JITOSOL_MINT && b.owner.as_deref() == Some(&identity_str))
+            .filter_map(|b| b.ui_token_amount.amount.parse::<i128>().ok())
+            .sum();
+        let delta = post.saturating_sub(pre);
+        if delta <= 0 {
+            continue;
+        }
+
+        // Identify SOL delta for the identity system account in this tx (if present).
+        let idx = tx
+            .transaction
+            .message
+            .account_keys
+            .iter()
+            .position(|k| k.pubkey == identity_str);
+        if let Some(i) = idx
+            && i < meta.pre_balances.len()
+            && i < meta.post_balances.len()
+        {
+            total_identity_sol_delta =
+                total_identity_sol_delta.saturating_add(meta.post_balances[i].saturating_sub(meta.pre_balances[i]));
+        }
+
+        count += 1;
+        total_in_lamports = total_in_lamports.saturating_add(delta.min(u64::MAX as i128) as u64);
+    }
+
+    Ok((count, total_in_lamports, total_identity_sol_delta))
 }
 
 /// Run the main report generation workflow
@@ -1634,20 +2577,46 @@ async fn run_report_generation(args: Args, cache: Cache) -> Result<()> {
     // Expand recurring expenses into individual entries for the report period
     let recurring = cache.get_recurring_expenses().await?;
     if !recurring.is_empty() {
-        // Determine month range from rewards data
-        let first_date = rewards.iter().filter_map(|r| r.date.as_ref()).min();
-        let last_date = rewards.iter().filter_map(|r| r.date.as_ref()).max();
+        // Prefer reward date range; if unavailable, derive from recurring rules.
+        let reward_months: Vec<String> = rewards
+            .iter()
+            .filter_map(|r| r.date.as_deref())
+            .filter_map(month_key_from_date)
+            .collect();
 
-        if let (Some(start), Some(end)) = (first_date, last_date) {
-            let start_month = &start[..7]; // YYYY-MM
-            let end_month = &end[..7];
-            let expanded = expenses::expand_recurring_expenses(&recurring, start_month, end_month);
+        let mut start_month = reward_months.iter().min().cloned();
+        let mut end_month = reward_months.iter().max().cloned();
+
+        if start_month.is_none() || end_month.is_none() {
+            let current_month = Utc::now().date_naive().format("%Y-%m").to_string();
+            start_month = recurring
+                .iter()
+                .filter_map(|r| month_key_from_date(&r.start_date))
+                .min();
+            end_month = recurring
+                .iter()
+                .filter_map(|r| {
+                    r.end_date
+                        .as_deref()
+                        .and_then(month_key_from_date)
+                        .or_else(|| Some(current_month.clone()))
+                })
+                .max();
+        }
+
+        if let (Some(start_month), Some(mut end_month)) = (start_month, end_month) {
+            if end_month < start_month {
+                end_month = start_month.clone();
+            }
+            let expanded = expenses::expand_recurring_expenses(&recurring, &start_month, &end_month);
             println!(
                 "  Expanded {} recurring expenses into {} monthly entries",
                 recurring.len(),
                 expanded.len()
             );
             all_expenses.extend(expanded);
+        } else {
+            eprintln!("  Warning: Could not derive valid date range for recurring expenses");
         }
     }
 
@@ -1770,8 +2739,8 @@ async fn fetch_rewards_with_cache(
         }
 
         // Fall back to Dune for epochs that RPC couldn't fetch
-        if let Some((dune_client, start_date)) = prepare_dune_fallback(&rpc_failures, dune_api_key, config) {
-            match dune_client.fetch_inflation_rewards(&start_date).await {
+        if let Some((dune_client, start_date, min_slot)) = prepare_dune_fallback(&rpc_failures, dune_api_key, config) {
+            match dune_client.fetch_inflation_rewards(&start_date, min_slot).await {
                 Ok(dune_rewards) => {
                     // Filter to only the epochs we need
                     let needed: Vec<_> = dune_rewards
@@ -1862,7 +2831,12 @@ async fn fetch_mev_with_cache(
     if no_cache {
         let claims = jito::fetch_mev_claims(config).await?;
         cache.store_mev_claims(&claims).await?;
-        return Ok(claims);
+        let mut filtered: Vec<_> = claims
+            .into_iter()
+            .filter(|c| c.epoch >= start_epoch && c.epoch <= end_epoch)
+            .collect();
+        filtered.sort_by_key(|c| c.epoch);
+        return Ok(filtered);
     }
 
     // MEV claims only exist for completed epochs
@@ -2060,8 +3034,8 @@ async fn fetch_leader_fees_with_cache(
         }
 
         // Fall back to Dune for epochs that RPC couldn't fetch
-        if let Some((dune_client, start_date)) = prepare_dune_fallback(&rpc_failures, dune_api_key, config) {
-            match dune_client.fetch_leader_fees(&start_date).await {
+        if let Some((dune_client, start_date, min_slot)) = prepare_dune_fallback(&rpc_failures, dune_api_key, config) {
+            match dune_client.fetch_leader_fees(&start_date, min_slot).await {
                 Ok(dune_fees) => {
                     let needed: Vec<_> = dune_fees
                         .into_iter()
@@ -2229,6 +3203,7 @@ async fn fetch_transfers_with_cache(
     // For each tracked account, fetch new transfers since the last cached slot
     let mut new_count = 0;
     let mut rpc_failed = false;
+    let mut hit_signature_cap = false;
 
     for (label, account) in transactions::get_tracked_accounts(config) {
         // Use account progress (tracks highest slot seen, even if no transfers found)
@@ -2247,6 +3222,9 @@ async fn fetch_transfers_with_cache(
                 // Store progress even if no transfers found (for accounts with only versioned txs)
                 if let Some(highest_slot) = result.highest_slot_seen {
                     cache.set_account_progress(label, highest_slot).await?;
+                }
+                if result.hit_max_signatures {
+                    hit_signature_cap = true;
                 }
 
                 if !result.transfers.is_empty() {
@@ -2277,15 +3255,24 @@ async fn fetch_transfers_with_cache(
         }
     }
 
-    // Fall back to Dune if RPC failed and we have few/no transfers
-    if (rpc_failed || all_transfers.is_empty())
+    // Fall back to Dune if RPC failed or our history was truncated by a signature cap.
+    // Dune transfer queries are already filtered to transfers and include vote/identity, so they
+    // can backfill missing history without scanning high-volume vote tx signatures.
+    if (rpc_failed || all_transfers.is_empty() || hit_signature_cap)
         && dune_api_key.is_some()
         && let Some(api_key) = dune_api_key
     {
         println!("    Falling back to Dune for transfer history...");
 
         let dune_client = dune::DuneClient::new(api_key.to_string(), config);
-        match dune_client.fetch_transfers(bootstrap_date).await {
+        // If we hit the signature cap, we likely missed *older* history, so don't apply a min_slot.
+        // Otherwise, use the newest cached slot as a lower bound to fetch only new transfers.
+        let min_slot = if hit_signature_cap || all_transfers.is_empty() {
+            None
+        } else {
+            all_transfers.iter().map(|t| t.slot).max().map(|s| s.saturating_add(1))
+        };
+        match dune_client.fetch_transfers(bootstrap_date, min_slot).await {
             Ok(dune_transfers) => {
                 // Collect transfers that are actually new (not already seen)
                 let mut dune_new_transfers = Vec::new();

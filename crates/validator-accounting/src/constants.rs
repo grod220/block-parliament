@@ -91,6 +91,11 @@ pub const VOTE_ACCOUNT_SIZE: usize = 3762;
 /// System account minimum size (bytes)
 pub const SYSTEM_ACCOUNT_SIZE: usize = 0;
 
+/// SPL token account data size (bytes) - for rent-exempt reserve calculation
+///
+/// This is the size of an SPL Token `Account` (used by associated token accounts).
+pub const SPL_TOKEN_ACCOUNT_SIZE: usize = 165;
+
 // =============================================================================
 // Position Tracking
 // =============================================================================
@@ -101,6 +106,10 @@ pub const LAMPORTS_PER_SOL_U64: u64 = 1_000_000_000;
 /// Reconciliation tolerance in lamports (0.0001 SOL)
 /// Allows for minor dust/rounding differences
 pub const RECONCILIATION_TOLERANCE_LAMPORTS: i64 = 100_000;
+
+/// Max SOL outflow (fees/rent) tolerated in a tx when classifying an SPL-token inflow as "reward-like".
+/// This helps avoid treating swaps/purchases as income in reconciliation.
+pub const TOKEN_REWARD_MAX_OWNER_SOL_OUT_LAMPORTS: i64 = 10_000_000; // 0.01 SOL
 
 // =============================================================================
 // File Names
@@ -124,6 +133,10 @@ pub const TREASURY_LEDGER_FILENAME: &str = "treasury_ledger.csv";
 
 /// Summary CSV filename
 pub const SUMMARY_FILENAME: &str = "summary.csv";
+
+/// Glossary / data dictionary for accountants
+#[allow(dead_code)]
+pub const GLOSSARY_FILENAME: &str = "glossary.csv";
 
 // =============================================================================
 // Rate Limiting

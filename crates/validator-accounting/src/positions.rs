@@ -88,6 +88,7 @@ pub enum AccountType {
     VoteAccount,
     Identity,
     WithdrawAuthority,
+    TokenAccount,
     JitosolTokenAccount,
     StakeAccount,
     PersonalWallet,
@@ -99,6 +100,7 @@ impl std::fmt::Display for AccountType {
             AccountType::VoteAccount => write!(f, "VoteAccount"),
             AccountType::Identity => write!(f, "Identity"),
             AccountType::WithdrawAuthority => write!(f, "WithdrawAuthority"),
+            AccountType::TokenAccount => write!(f, "TokenAccount"),
             AccountType::JitosolTokenAccount => write!(f, "JitoSOL"),
             AccountType::StakeAccount => write!(f, "StakeAccount"),
             AccountType::PersonalWallet => write!(f, "PersonalWallet"),
@@ -114,6 +116,7 @@ impl FromStr for AccountType {
             "VoteAccount" => Ok(AccountType::VoteAccount),
             "Identity" => Ok(AccountType::Identity),
             "WithdrawAuthority" => Ok(AccountType::WithdrawAuthority),
+            "TokenAccount" => Ok(AccountType::TokenAccount),
             "JitoSOL" => Ok(AccountType::JitosolTokenAccount),
             "StakeAccount" => Ok(AccountType::StakeAccount),
             "PersonalWallet" => Ok(AccountType::PersonalWallet),
@@ -228,6 +231,10 @@ pub struct ValidatorPosition {
     pub identity_lamports: u64,
     pub withdraw_authority_lamports: u64,
 
+    // Token accounts (ATAs) owned by the core owners (lamports held directly in those accounts)
+    pub token_accounts_lamports: u64,
+    pub token_accounts_withdrawable_lamports: u64,
+
     // jitoSOL (BAM rewards)
     pub jitosol_lamports: u64,
     pub jitosol_sol_rate: f64,
@@ -305,11 +312,21 @@ impl std::fmt::Display for ReconciliationStatus {
 /// Uses getMultipleAccounts to ensure consistent snapshot
 pub async fn fetch_all_balances_atomic(client: &RpcClient, config: &Config) -> Result<(Vec<AccountBalance>, u64)> {
     // Collect accounts to fetch, tracking their types
-    let accounts_with_types = [
+    let mut accounts_with_types: Vec<(Pubkey, AccountType)> = vec![
         (config.vote_account, AccountType::VoteAccount),
         (config.identity, AccountType::Identity),
         (config.withdraw_authority, AccountType::WithdrawAuthority),
     ];
+
+    // Include common ATAs for the core treasury owners so wrapped SOL (wSOL) and rent
+    // held in token accounts is included in the position snapshot.
+    for owner in [&config.vote_account, &config.identity, &config.withdraw_authority] {
+        for ata_str in compute_common_atas(owner) {
+            if let Ok(ata) = Pubkey::from_str(&ata_str) {
+                accounts_with_types.push((ata, AccountType::TokenAccount));
+            }
+        }
+    }
 
     // Deduplicate by pubkey (identity may == withdraw_authority)
     let mut seen = HashSet::new();
@@ -357,6 +374,7 @@ pub async fn fetch_all_balances_atomic(client: &RpcClient, config: &Config) -> R
 fn get_rent_exempt_for_type(client: &RpcClient, account_type: AccountType) -> Result<u64> {
     let size = match account_type {
         AccountType::VoteAccount => constants::VOTE_ACCOUNT_SIZE,
+        AccountType::TokenAccount => constants::SPL_TOKEN_ACCOUNT_SIZE,
         _ => constants::SYSTEM_ACCOUNT_SIZE,
     };
 
@@ -450,6 +468,15 @@ pub async fn fetch_jitosol_balance(client: &RpcClient, identity: &Pubkey) -> Res
             }
         }
     }
+}
+
+/// Fetch total jitoSOL balance across a set of owners (e.g., identity + withdraw authority).
+pub async fn fetch_jitosol_balance_total(client: &RpcClient, owners: &[Pubkey]) -> Result<u64> {
+    let mut total = 0u64;
+    for owner in owners {
+        total = total.saturating_add(fetch_jitosol_balance(client, owner).await?);
+    }
+    Ok(total)
 }
 
 /// Jito stake pool account layout offsets
@@ -749,16 +776,26 @@ pub struct IncomeData {
     pub total_expenses_lamports: u64,
     pub total_withdrawals_lamports: u64,
     pub total_deposits_lamports: u64,
+    /// SOL-equivalent value of external jitoSOL transferred into the treasury (no SOL delta paid by us).
+    ///
+    /// This captures capital contributions / transfers-in of jitoSOL that would otherwise appear as
+    /// unexplained surplus when jitoSOL is included in assets.
+    pub token_deposits_lamports: u64,
+    /// Adjustments that convert "external looking" cash flows into internal asset conversions.
+    /// Example: swapping SOL -> jitoSOL is not a withdrawal if jitoSOL is included in assets.
+    pub internal_adjustment_lamports: i64,
 }
 
 /// Build a complete position snapshot from fetched data
 /// Uses saturating arithmetic to prevent overflow
+#[allow(clippy::too_many_arguments)]
 pub fn build_position_snapshot(
     balances: &[AccountBalance],
     stake_accounts: &[StakeAccountInfo],
     jitosol_lamports: u64,
     jitosol_rate: f64,
     income_data: &IncomeData,
+    initial_treasury_lamports: u64,
     snapshot_slot: u64,
     snapshot_time: i64,
 ) -> ValidatorPosition {
@@ -768,6 +805,8 @@ pub fn build_position_snapshot(
     let mut vote_withdrawable = 0u64;
     let mut identity_lamports = 0u64;
     let mut withdraw_auth_lamports = 0u64;
+    let mut token_accounts_lamports = 0u64;
+    let mut token_accounts_withdrawable = 0u64;
 
     for balance in balances {
         if !seen.insert(balance.account) {
@@ -784,6 +823,10 @@ pub fn build_position_snapshot(
             }
             AccountType::WithdrawAuthority => {
                 withdraw_auth_lamports = balance.balance_lamports;
+            }
+            AccountType::TokenAccount => {
+                token_accounts_lamports = token_accounts_lamports.saturating_add(balance.balance_lamports);
+                token_accounts_withdrawable = token_accounts_withdrawable.saturating_add(balance.withdrawable_lamports);
             }
             _ => {}
         }
@@ -811,17 +854,20 @@ pub fn build_position_snapshot(
     let total_liquid = vote_withdrawable
         .saturating_add(identity_lamports)
         .saturating_add(withdraw_auth_lamports)
+        .saturating_add(token_accounts_withdrawable)
         .saturating_add(stake_liquid)
         .saturating_add(jitosol_sol_equivalent); // Include jitoSOL in liquid
 
     // Locked = vote account rent-exempt portion + locked stake
     let vote_locked = vote_lamports.saturating_sub(vote_withdrawable);
-    let total_locked = vote_locked.saturating_add(stake_locked);
+    let token_locked = token_accounts_lamports.saturating_sub(token_accounts_withdrawable);
+    let total_locked = vote_locked.saturating_add(stake_locked).saturating_add(token_locked);
 
     // Total assets = all SOL + jitoSOL equivalent
     let total_assets = vote_lamports
         .saturating_add(identity_lamports)
         .saturating_add(withdraw_auth_lamports)
+        .saturating_add(token_accounts_lamports)
         .saturating_add(stake_total)
         .saturating_add(jitosol_sol_equivalent);
 
@@ -839,7 +885,10 @@ pub fn build_position_snapshot(
     // For now, set to 0 and document the limitation
     let lst_appreciation: i64 = 0;
 
-    let expected = net_cash_flow.saturating_add(lst_appreciation);
+    let expected = net_cash_flow
+        .saturating_add(lst_appreciation)
+        .saturating_add(income_data.internal_adjustment_lamports)
+        .saturating_add(initial_treasury_lamports.min(i64::MAX as u64) as i64);
 
     // Safe conversion of total_assets to i64 for reconciliation diff
     let total_assets_i64 = if total_assets > i64::MAX as u64 {
@@ -856,6 +905,8 @@ pub fn build_position_snapshot(
         vote_account_withdrawable: vote_withdrawable,
         identity_lamports,
         withdraw_authority_lamports: withdraw_auth_lamports,
+        token_accounts_lamports,
+        token_accounts_withdrawable_lamports: token_accounts_withdrawable,
         jitosol_lamports,
         jitosol_sol_rate: jitosol_rate,
         jitosol_sol_equivalent,
@@ -947,6 +998,8 @@ mod tests {
             vote_account_withdrawable: 0,
             identity_lamports: 0,
             withdraw_authority_lamports: 0,
+            token_accounts_lamports: 0,
+            token_accounts_withdrawable_lamports: 0,
             jitosol_lamports: 0,
             jitosol_sol_rate: 1.0,
             jitosol_sol_equivalent: 0,

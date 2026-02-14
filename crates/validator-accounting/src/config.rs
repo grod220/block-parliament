@@ -96,6 +96,10 @@ pub struct ValidatorConfig {
     pub first_reward_epoch: u64,
     /// Bootstrap date (when validator was set up)
     pub bootstrap_date: String,
+    /// Optional initial SOL already present in the validator treasury at `bootstrap_date`.
+    /// If omitted, reconciliation assumes starting balance = 0 at `bootstrap_date`.
+    #[serde(default)]
+    pub initial_treasury_sol: Option<f64>,
     /// SFDP acceptance date (optional - only if in SFDP program)
     #[serde(default)]
     pub sfdp_acceptance_date: Option<String>,
@@ -162,6 +166,8 @@ pub struct Config {
     pub sfdp_acceptance_date: Option<String>,
     /// Bootstrap date (for finding initial seeding)
     pub bootstrap_date: String,
+    /// Initial SOL in the validator treasury at `bootstrap_date` (for reconciliation baseline)
+    pub initial_treasury_lamports: u64,
     /// BAM reward tracking enabled
     pub bam_enabled: bool,
     /// First epoch to check for BAM rewards
@@ -239,6 +245,13 @@ impl Config {
 
             // Bootstrap date (when validator was first set up)
             bootstrap_date: validator.bootstrap_date.clone(),
+            initial_treasury_lamports: validator
+                .initial_treasury_sol
+                .unwrap_or(0.0)
+                .max(0.0)
+                .mul_add(constants::LAMPORTS_PER_SOL_U64 as f64, 0.0)
+                .round()
+                .min(u64::MAX as f64) as u64,
 
             // BAM reward tracking
             bam_enabled,
@@ -325,6 +338,7 @@ mod tests {
             first_reward_epoch: 900,
             sfdp_acceptance_date: sfdp_date.map(|s| s.to_string()),
             bootstrap_date: "2025-11-01".to_string(),
+            initial_treasury_lamports: 0,
             bam_enabled: true,
             bam_first_epoch: 912,
             bam_jitosol_rate: 1.0,

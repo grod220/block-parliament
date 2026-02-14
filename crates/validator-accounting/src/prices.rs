@@ -66,9 +66,6 @@ pub async fn fetch_historical_prices_with_cache(
         }
     }
 
-    // Only include dates from November 2025 onwards (validator bootstrap date)
-    let min_valid_date = NaiveDate::from_ymd_opt(2025, 11, 1).unwrap();
-
     for transfer in transfers {
         if let Some(date) = &transfer.date
             && let Ok(d) = NaiveDate::parse_from_str(date, "%Y-%m-%d")
@@ -77,7 +74,7 @@ pub async fn fetch_historical_prices_with_cache(
             if existing_prices.is_some_and(|p| p.contains_key(date)) {
                 continue;
             }
-            if d >= min_valid_date && !dates.contains(&d) {
+            if !dates.contains(&d) {
                 dates.push(d);
             }
         }

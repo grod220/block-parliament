@@ -273,6 +273,7 @@ mod tests {
             first_reward_epoch: 900,
             sfdp_acceptance_date: None,
             bootstrap_date: "2025-01-01".to_string(),
+            initial_treasury_lamports: 0,
             bam_enabled: true,
             bam_first_epoch: 912,
             bam_jitosol_rate: 1.0, // Default rate

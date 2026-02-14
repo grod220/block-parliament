@@ -71,6 +71,33 @@ pub struct EpochReward {
     pub date: Option<String>,
 }
 
+/// Inflation reward credited to a stake account for a given epoch.
+///
+/// This is distinct from the vote-account "Voting" rewards (commission).
+#[derive(Debug, Clone, Serialize)]
+pub struct StakeEpochReward {
+    pub epoch: u64,
+    pub stake_account: Pubkey,
+    pub amount_lamports: u64,
+}
+
+/// SPL token balance delta observed in a transaction.
+///
+/// We use this primarily to capture LST rewards (e.g. jitoSOL) that arrive as SPL tokens,
+/// which won't show up in native SOL transfer parsing.
+#[derive(Debug, Clone, Serialize)]
+pub struct TokenFlow {
+    pub signature: String,
+    pub slot: u64,
+    pub timestamp: Option<i64>,
+    pub owner: Pubkey,
+    pub mint: Pubkey,
+    /// Delta in token base units (can be negative).
+    pub delta_amount: i64,
+    /// Lamport delta for the owner system account in the same tx (includes fees + any SOL movements).
+    pub owner_sol_delta_lamports: i64,
+}
+
 /// SOL transfer parsed from transaction
 #[derive(Debug, Clone, Serialize)]
 pub struct SolTransfer {
@@ -341,6 +368,8 @@ pub struct FetchTransfersResult {
     pub transfers: Vec<SolTransfer>,
     /// The highest slot we saw (for progress tracking even if no transfers found)
     pub highest_slot_seen: Option<u64>,
+    /// Whether we hit the per-account signature cap (history may be truncated)
+    pub hit_max_signatures: bool,
 }
 
 /// Fetch transfers for a single account, stopping at a specific slot
@@ -364,6 +393,7 @@ pub async fn fetch_transfers_for_account(
     let mut before: Option<Signature> = None;
     let max_signatures = constants::MAX_SIGNATURES_PER_ACCOUNT;
     let mut stopped_at_cached = false;
+    let mut hit_max_signatures = false;
     let mut highest_slot_seen: Option<u64> = None;
 
     // Paginate through signatures with retry logic
@@ -373,6 +403,7 @@ pub async fn fetch_transfers_for_account(
     loop {
         if signatures.len() >= max_signatures {
             println!("      Reached limit of {} signatures", max_signatures);
+            hit_max_signatures = true;
             break;
         }
 
@@ -450,6 +481,7 @@ pub async fn fetch_transfers_for_account(
         return Ok(FetchTransfersResult {
             transfers: Vec::new(),
             highest_slot_seen,
+            hit_max_signatures,
         });
     }
 
@@ -522,13 +554,16 @@ pub async fn fetch_transfers_for_account(
     Ok(FetchTransfersResult {
         transfers,
         highest_slot_seen,
+        hit_max_signatures,
     })
 }
 
 /// Get the accounts we fetch transactions for (for caching purposes)
-/// Note: We don't include vote_account/identity because they don't have SOL transfers
-/// (they're all vote transactions). Transfers involving them will be captured when
-/// we query the other accounts' histories.
+///
+/// We primarily scan low-volume addresses via RPC. Vote/identity can have extremely high signature
+/// volumes (vote transactions), making naive signature scanning expensive and likely to hit the
+/// per-account signature cap. For full transfer-history accuracy, configure a Dune API key so the
+/// app can backfill SOL transfers involving vote/identity when RPC history is truncated or fails.
 pub fn get_tracked_accounts(config: &Config) -> Vec<(&'static str, Pubkey)> {
     let sfdp_address = Pubkey::from_str(constants::SFDP_REIMBURSEMENT).expect("Invalid SFDP address");
 
@@ -565,11 +600,7 @@ fn parse_sol_transfers_debug(
     }
 
     let timestamp = tx.block_time;
-    let date = timestamp.map(|ts| {
-        DateTime::from_timestamp(ts, 0)
-            .map(|dt| dt.format("%Y-%m-%d").to_string())
-            .unwrap_or_default()
-    });
+    let date = timestamp.and_then(|ts| DateTime::from_timestamp(ts, 0).map(|dt| dt.format("%Y-%m-%d").to_string()));
 
     let mut transfers = Vec::new();
 
@@ -742,17 +773,32 @@ fn parse_system_transfer_from_parsed_instruction(pi: &ParsedInstruction) -> Opti
     }
 
     let obj = pi.parsed.as_object()?;
+    let ix_type = obj.get("type").and_then(|v| v.as_str()).unwrap_or("transfer");
     let info = obj.get("info")?.as_object()?;
 
-    let source = info.get("source")?.as_str()?;
-    let destination = info.get("destination")?.as_str()?;
+    // Different System Program instruction types use different field names.
+    // We support the common lamport-moving cases:
+    // - transfer: source -> destination
+    // - createAccount/createAccountWithSeed: source -> newAccount
+    let source = info
+        .get("source")
+        .or_else(|| info.get("from"))
+        .and_then(|v| v.as_str())?;
+    let destination = info
+        .get("destination")
+        .or_else(|| info.get("newAccount"))
+        .or_else(|| info.get("to"))
+        .and_then(|v| v.as_str())?;
 
     // Only support lamports-based transfers.
     let lamports = json_u64(info.get("lamports")?)?;
 
     let from = Pubkey::from_str(source).ok()?;
     let to = Pubkey::from_str(destination).ok()?;
-    Some((from, to, lamports))
+    match ix_type {
+        "transfer" | "transferWithSeed" | "createAccount" | "createAccountWithSeed" => Some((from, to, lamports)),
+        _ => None,
+    }
 }
 
 fn json_u64(v: &JsonValue) -> Option<u64> {
@@ -835,11 +881,13 @@ pub fn categorize_transfers(transfers: &[SolTransfer], config: &Config) -> Categ
 /// Convert epoch number to approximate date
 /// Calibrated: epoch 896 = 2025-12-16
 pub fn epoch_to_date(epoch: u64) -> String {
-    // Use saturating arithmetic to prevent overflow with extreme epoch values
-    let epoch_i64 = epoch.min(i64::MAX as u64) as i64;
-    let epoch_diff = epoch_i64.saturating_sub(constants::REFERENCE_EPOCH);
-    let duration = epoch_diff.saturating_mul(constants::EPOCH_DURATION_SECONDS);
-    let timestamp = constants::REFERENCE_EPOCH_TIMESTAMP.saturating_add(duration);
+    // Support epochs before and after the reference epoch while still saturating safely.
+    let epoch_i128 = epoch as i128;
+    let reference_epoch = constants::REFERENCE_EPOCH as i128;
+    let epoch_diff = epoch_i128.saturating_sub(reference_epoch);
+    let duration = epoch_diff.saturating_mul(constants::EPOCH_DURATION_SECONDS as i128);
+    let timestamp_i128 = (constants::REFERENCE_EPOCH_TIMESTAMP as i128).saturating_add(duration);
+    let timestamp = timestamp_i128.clamp(i64::MIN as i128, i64::MAX as i128) as i64;
 
     DateTime::from_timestamp(timestamp, 0)
         .map(|dt| dt.format("%Y-%m-%d").to_string())
@@ -852,8 +900,10 @@ mod tests {
 
     #[test]
     fn test_epoch_to_date() {
+        assert_eq!(epoch_to_date(895), "2025-12-14");
         assert_eq!(epoch_to_date(896), "2025-12-16");
         assert_eq!(epoch_to_date(900), "2025-12-24");
         assert_eq!(epoch_to_date(904), "2026-01-01");
+        assert_eq!(epoch_to_date(0), "2021-01-19");
     }
 }

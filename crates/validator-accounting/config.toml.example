@@ -20,15 +20,19 @@ personal_wallet = "YourPersonalWalletPubkeyHere"
 # Commission percentage (0-100)
 commission_percent = 5
 
-# Jito MEV commission percentage (typically 10)
-jito_mev_commission_percent = 10
-
 # First epoch where your validator started earning rewards
 first_reward_epoch = 900
 
-# Date your validator was first set up (YYYY-MM-DD)
-# Used for querying historical transfers
+# Date to begin accounting from (YYYY-MM-DD)
+# Used for querying historical transfers and as the reconciliation "start" date.
+# If you already had SOL in the validator treasury on this date, set
+# `initial_treasury_sol` to that starting balance so reconciliation matches reality.
 bootstrap_date = "2025-01-01"
+
+# Optional: initial SOL already present in the validator treasury at bootstrap_date.
+# This is a reconciliation baseline, not "income".
+# Default: 0.0
+initial_treasury_sol = 0.0
 
 # SFDP (Solana Foundation Delegation Program) acceptance date, if applicable
 # Leave empty or remove if not in SFDP

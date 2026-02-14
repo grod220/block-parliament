@@ -18,7 +18,7 @@ use crate::jito::MevClaim;
 use crate::leader_fees::EpochLeaderFees;
 use crate::positions::{StakeAccountInfo, ValidatorPosition};
 use crate::prices::PriceCache;
-use crate::transactions::{EpochReward, SolTransfer};
+use crate::transactions::{EpochReward, SolTransfer, StakeEpochReward, TokenFlow};
 use crate::vote_costs::EpochVoteCost;
 use solana_sdk::pubkey::Pubkey;
 use std::str::FromStr;
@@ -188,6 +188,49 @@ impl Cache {
         )
         .execute(&self.pool)
         .await?;
+
+        sqlx::query(
+            "
+            -- Stake-account inflation rewards per epoch (self-stake)
+            -- Stored per (epoch, stake_account) so stake rewards are included in lifetime income.
+            CREATE TABLE IF NOT EXISTS stake_rewards (
+                epoch INTEGER NOT NULL,
+                stake_account TEXT NOT NULL,
+                amount_lamports INTEGER NOT NULL,
+                fetched_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (epoch, stake_account)
+            )
+            ",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_stake_rewards_epoch ON stake_rewards(epoch)")
+            .execute(&self.pool)
+            .await?;
+
+        sqlx::query(
+            "
+            -- Token balance deltas by tx (used for LST / SPL-token-aware reconciliation)
+            CREATE TABLE IF NOT EXISTS token_flows (
+                signature TEXT NOT NULL,
+                slot INTEGER NOT NULL,
+                timestamp INTEGER,
+                owner TEXT NOT NULL,
+                mint TEXT NOT NULL,
+                delta_amount INTEGER NOT NULL,
+                owner_sol_delta_lamports INTEGER NOT NULL,
+                fetched_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (signature, owner, mint)
+            )
+            ",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_token_flows_owner_mint_slot ON token_flows(owner, mint, slot)")
+            .execute(&self.pool)
+            .await?;
 
         sqlx::query(
             "
@@ -433,6 +476,8 @@ impl Cache {
                 vote_account_lamports INTEGER NOT NULL,
                 identity_lamports INTEGER NOT NULL,
                 withdraw_authority_lamports INTEGER NOT NULL,
+                token_accounts_lamports INTEGER NOT NULL DEFAULT 0,
+                token_accounts_withdrawable_lamports INTEGER NOT NULL DEFAULT 0,
                 stake_liquid_lamports INTEGER NOT NULL DEFAULT 0,
                 stake_locked_lamports INTEGER NOT NULL DEFAULT 0,
                 jitosol_lamports INTEGER DEFAULT 0,
@@ -450,6 +495,8 @@ impl Cache {
         .execute(&self.pool)
         .await?;
 
+        self.maybe_migrate_balance_history().await?;
+
         // Index for withdrawal tracking
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_transfers_withdrawal
@@ -459,6 +506,36 @@ impl Cache {
         .execute(&self.pool)
         .await
         .ok(); // Ignore error if partial index not supported
+
+        Ok(())
+    }
+
+    async fn maybe_migrate_balance_history(&self) -> Result<()> {
+        let table_exists: Option<(String,)> =
+            sqlx::query_as("SELECT name FROM sqlite_master WHERE type='table' AND name='balance_history'")
+                .fetch_optional(&self.pool)
+                .await?;
+        if table_exists.is_none() {
+            return Ok(());
+        }
+
+        let columns: Vec<(String,)> = sqlx::query_as("SELECT name FROM pragma_table_info('balance_history')")
+            .fetch_all(&self.pool)
+            .await?;
+
+        let has_token_accounts = columns.iter().any(|(name,)| name == "token_accounts_lamports");
+        if !has_token_accounts {
+            eprintln!("Migrating balance_history schema (adding token account columns)...");
+            // SQLite allows ADD COLUMN with DEFAULT. Existing rows will read as the default value.
+            sqlx::query("ALTER TABLE balance_history ADD COLUMN token_accounts_lamports INTEGER NOT NULL DEFAULT 0")
+                .execute(&self.pool)
+                .await?;
+            sqlx::query(
+                "ALTER TABLE balance_history ADD COLUMN token_accounts_withdrawable_lamports INTEGER NOT NULL DEFAULT 0",
+            )
+            .execute(&self.pool)
+            .await?;
+        }
 
         Ok(())
     }
@@ -1274,8 +1351,147 @@ impl Cache {
     }
 
     // =========================================================================
+    // Token Flows (SPL tokens)
+    // =========================================================================
+
+    /// Store SPL token balance deltas by tx signature.
+    pub async fn store_token_flows(&self, flows: &[TokenFlow]) -> Result<()> {
+        if flows.is_empty() {
+            return Ok(());
+        }
+
+        let mut tx = self.pool.begin().await?;
+        for f in flows {
+            sqlx::query(
+                "INSERT OR REPLACE INTO token_flows
+                 (signature, slot, timestamp, owner, mint, delta_amount, owner_sol_delta_lamports)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(&f.signature)
+            .bind(f.slot as i64)
+            .bind(f.timestamp)
+            .bind(f.owner.to_string())
+            .bind(f.mint.to_string())
+            .bind(f.delta_amount)
+            .bind(f.owner_sol_delta_lamports)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Sum of reward-like token inflows for a given owner/mint (in token base units).
+    ///
+    /// We classify "reward-like" as: token delta is positive and the owner system account didn't
+    /// spend more than `max_owner_sol_out_lamports` SOL (fees/rent) in the same tx.
+    #[allow(dead_code)]
+    pub async fn get_reward_like_token_inflows(
+        &self,
+        owner: &Pubkey,
+        mint: &Pubkey,
+        max_owner_sol_out_lamports: i64,
+    ) -> Result<u64> {
+        let lower_bound = -max_owner_sol_out_lamports.abs();
+
+        let row: (Option<i64>,) = sqlx::query_as(
+            "SELECT SUM(delta_amount) FROM token_flows
+             WHERE owner = ?
+               AND mint = ?
+               AND delta_amount > 0
+               AND owner_sol_delta_lamports < 0
+               AND owner_sol_delta_lamports >= ?",
+        )
+        .bind(owner.to_string())
+        .bind(mint.to_string())
+        .bind(lower_bound)
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or((None,));
+
+        Ok(row.0.unwrap_or(0).max(0) as u64)
+    }
+
+    pub async fn get_reward_like_token_inflows_up_to_slot(
+        &self,
+        owner: &Pubkey,
+        mint: &Pubkey,
+        max_owner_sol_out_lamports: i64,
+        max_slot: u64,
+    ) -> Result<u64> {
+        let lower_bound = -max_owner_sol_out_lamports.abs();
+
+        let row: (Option<i64>,) = sqlx::query_as(
+            "SELECT SUM(delta_amount) FROM token_flows
+             WHERE owner = ?
+               AND mint = ?
+               AND slot <= ?
+               AND delta_amount > 0
+               AND owner_sol_delta_lamports < 0
+               AND owner_sol_delta_lamports >= ?",
+        )
+        .bind(owner.to_string())
+        .bind(mint.to_string())
+        .bind(max_slot as i64)
+        .bind(lower_bound)
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or((None,));
+
+        Ok(row.0.unwrap_or(0).max(0) as u64)
+    }
+
+    // =========================================================================
     // Position Tracking
     // =========================================================================
+
+    /// Get stake reward keys present for an epoch range (for cache backfill checks)
+    pub async fn get_stake_reward_keys(
+        &self,
+        start_epoch: u64,
+        end_epoch: u64,
+    ) -> Result<std::collections::HashSet<String>> {
+        if end_epoch < start_epoch {
+            return Ok(std::collections::HashSet::new());
+        }
+
+        let rows: Vec<(i64, String)> =
+            sqlx::query_as("SELECT epoch, stake_account FROM stake_rewards WHERE epoch >= ? AND epoch <= ?")
+                .bind(start_epoch as i64)
+                .bind(end_epoch as i64)
+                .fetch_all(&self.pool)
+                .await
+                .unwrap_or_default();
+
+        Ok(rows
+            .into_iter()
+            .map(|(epoch, account)| format!("{}:{}", epoch, account))
+            .collect())
+    }
+
+    /// Store stake-account inflation rewards.
+    ///
+    /// Uses INSERT OR REPLACE so re-fetching is idempotent.
+    pub async fn store_stake_rewards(&self, rewards: &[StakeEpochReward]) -> Result<()> {
+        if rewards.is_empty() {
+            return Ok(());
+        }
+
+        let mut tx = self.pool.begin().await?;
+        for r in rewards {
+            sqlx::query(
+                "INSERT OR REPLACE INTO stake_rewards (epoch, stake_account, amount_lamports)
+                 VALUES (?, ?, ?)",
+            )
+            .bind(r.epoch as i64)
+            .bind(r.stake_account.to_string())
+            .bind(r.amount_lamports as i64)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
 
     /// Store stake accounts
     /// Uses a single transaction for DELETE + INSERT to prevent data loss on failure
@@ -1312,11 +1528,12 @@ impl Cache {
         sqlx::query(
             "INSERT OR REPLACE INTO balance_history
              (date, epoch, snapshot_slot, vote_account_lamports, identity_lamports,
-              withdraw_authority_lamports, stake_liquid_lamports, stake_locked_lamports,
+              withdraw_authority_lamports, token_accounts_lamports, token_accounts_withdrawable_lamports,
+              stake_liquid_lamports, stake_locked_lamports,
               jitosol_lamports, jitosol_rate, total_lamports, cumulative_income_lamports,
               cumulative_expenses_lamports, cumulative_withdrawals_lamports,
               cumulative_deposits_lamports)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(date)
         .bind(epoch as i64)
@@ -1324,6 +1541,8 @@ impl Cache {
         .bind(position.vote_account_lamports as i64)
         .bind(position.identity_lamports as i64)
         .bind(position.withdraw_authority_lamports as i64)
+        .bind(position.token_accounts_lamports as i64)
+        .bind(position.token_accounts_withdrawable_lamports as i64)
         .bind(position.stake_accounts_liquid as i64)
         .bind(position.stake_accounts_locked as i64)
         .bind(position.jitosol_lamports as i64)
@@ -1344,13 +1563,21 @@ impl Cache {
     // =========================================================================
 
     /// Get total lifetime income in lamports
-    /// Includes: staking rewards, leader fees, MEV tips, BAM rewards
-    pub async fn get_total_income_lamports(&self) -> Result<u64> {
+    /// Includes: staking rewards (commission), leader fees, MEV tips, BAM/LST rewards (token-aware)
+    #[allow(dead_code)]
+    pub async fn get_total_income_lamports(&self, config: &Config, jitosol_rate: f64) -> Result<u64> {
         // Staking commission rewards
         let rewards: (Option<i64>,) = sqlx::query_as("SELECT SUM(amount_lamports) FROM epoch_rewards")
             .fetch_one(&self.pool)
             .await?;
         let rewards_lamports = rewards.0.unwrap_or(0).max(0) as u64;
+
+        // Stake-account inflation rewards (self-stake)
+        let stake: (Option<i64>,) = sqlx::query_as("SELECT SUM(amount_lamports) FROM stake_rewards")
+            .fetch_one(&self.pool)
+            .await
+            .unwrap_or((None,));
+        let stake_lamports = stake.0.unwrap_or(0).max(0) as u64;
 
         // Leader slot fees
         let leader: (Option<i64>,) = sqlx::query_as("SELECT SUM(total_fees_lamports) FROM leader_fees")
@@ -1364,50 +1591,155 @@ impl Cache {
             .await?;
         let mev_lamports = mev.0.unwrap_or(0).max(0) as u64;
 
-        // BAM rewards (jitoSOL converted to SOL equivalent at claim time)
-        // BAM is in jitoSOL, so we use the SOL equivalent stored at claim time
-        let bam: (Option<f64>,) = sqlx::query_as("SELECT SUM(amount_sol_equivalent) FROM bam_claims")
+        // BAM rewards are paid in jitoSOL. For reconciliation, we value reward-like jitoSOL inflows
+        // at the current jitoSOL->SOL rate (mark-to-market) so expected balance can match the
+        // current asset snapshot (which also values current holdings at the current rate).
+        let jitosol_mint = Pubkey::from_str(constants::JITOSOL_MINT).expect("Invalid JITOSOL_MINT constant");
+        let mut owners = vec![config.identity, config.withdraw_authority];
+        owners.sort();
+        owners.dedup();
+        let mut jitosol_reward_token_lamports: u64 = 0;
+        for owner in owners {
+            jitosol_reward_token_lamports = jitosol_reward_token_lamports.saturating_add(
+                self.get_reward_like_token_inflows(
+                    &owner,
+                    &jitosol_mint,
+                    constants::TOKEN_REWARD_MAX_OWNER_SOL_OUT_LAMPORTS,
+                )
+                .await?,
+            );
+        }
+        let jitosol_income_lamports =
+            ((jitosol_reward_token_lamports as f64) * jitosol_rate).min(u64::MAX as f64) as u64;
+
+        Ok(rewards_lamports
+            .saturating_add(stake_lamports)
+            .saturating_add(leader_lamports)
+            .saturating_add(mev_lamports)
+            .saturating_add(jitosol_income_lamports))
+    }
+
+    pub async fn get_total_income_lamports_up_to(
+        &self,
+        config: &Config,
+        jitosol_rate: f64,
+        max_epoch: u64,
+        max_slot: u64,
+    ) -> Result<u64> {
+        let max_epoch_i64 = (max_epoch.min(i64::MAX as u64)) as i64;
+
+        // Staking commission rewards
+        let rewards: (Option<i64>,) = sqlx::query_as("SELECT SUM(amount_lamports) FROM epoch_rewards WHERE epoch <= ?")
+            .bind(max_epoch_i64)
+            .fetch_one(&self.pool)
+            .await?;
+        let rewards_lamports = rewards.0.unwrap_or(0).max(0) as u64;
+
+        // Stake-account inflation rewards (self-stake)
+        let stake: (Option<i64>,) = sqlx::query_as("SELECT SUM(amount_lamports) FROM stake_rewards WHERE epoch <= ?")
+            .bind(max_epoch_i64)
             .fetch_one(&self.pool)
             .await
             .unwrap_or((None,));
-        let bam_lamports = ((bam.0.unwrap_or(0.0) * 1_000_000_000.0) as i64).max(0) as u64;
+        let stake_lamports = stake.0.unwrap_or(0).max(0) as u64;
+
+        // Leader slot fees
+        let leader: (Option<i64>,) =
+            sqlx::query_as("SELECT SUM(total_fees_lamports) FROM leader_fees WHERE epoch <= ?")
+                .bind(max_epoch_i64)
+                .fetch_one(&self.pool)
+                .await?;
+        let leader_lamports = leader.0.unwrap_or(0).max(0) as u64;
+
+        // Jito MEV commission
+        let mev: (Option<i64>,) = sqlx::query_as("SELECT SUM(commission_lamports) FROM mev_claims WHERE epoch <= ?")
+            .bind(max_epoch_i64)
+            .fetch_one(&self.pool)
+            .await?;
+        let mev_lamports = mev.0.unwrap_or(0).max(0) as u64;
+
+        // BAM rewards are paid in jitoSOL. For reconciliation, we value reward-like jitoSOL inflows
+        // at the current jitoSOL->SOL rate (mark-to-market) so expected balance can match the
+        // current asset snapshot (which also values current holdings at the current rate).
+        let jitosol_mint = Pubkey::from_str(constants::JITOSOL_MINT).expect("Invalid JITOSOL_MINT constant");
+        let mut owners = vec![config.identity, config.withdraw_authority];
+        owners.sort();
+        owners.dedup();
+        let mut jitosol_reward_token_lamports: u64 = 0;
+        for owner in owners {
+            jitosol_reward_token_lamports = jitosol_reward_token_lamports.saturating_add(
+                self.get_reward_like_token_inflows_up_to_slot(
+                    &owner,
+                    &jitosol_mint,
+                    constants::TOKEN_REWARD_MAX_OWNER_SOL_OUT_LAMPORTS,
+                    max_slot,
+                )
+                .await?,
+            );
+        }
+        let jitosol_income_lamports =
+            ((jitosol_reward_token_lamports as f64) * jitosol_rate).min(u64::MAX as f64) as u64;
 
         Ok(rewards_lamports
+            .saturating_add(stake_lamports)
             .saturating_add(leader_lamports)
             .saturating_add(mev_lamports)
-            .saturating_add(bam_lamports))
+            .saturating_add(jitosol_income_lamports))
     }
 
-    /// Get total lifetime expenses in lamports
-    /// Includes: vote transaction costs
-    /// Note: USD expenses are not included (would need price conversion)
+    /// Get total lifetime expenses in lamports (cash expenses).
+    ///
+    /// Includes:
+    /// - vote transaction costs
+    ///
+    /// Excludes:
+    /// - DoubleZero liabilities (accruals), since those are not necessarily paid yet and any
+    ///   actual on-chain payment will already appear as a withdrawal transfer.
+    ///
+    /// Note: USD expenses are not included (would need price conversion).
+    #[allow(dead_code)]
     pub async fn get_total_expenses_lamports(&self) -> Result<u64> {
-        // Vote transaction costs
         let vote_costs: (Option<i64>,) = sqlx::query_as("SELECT SUM(total_fee_lamports) FROM vote_costs")
             .fetch_one(&self.pool)
             .await?;
+        Ok(vote_costs.0.unwrap_or(0).max(0) as u64)
+    }
 
-        let doublezero: (Option<i64>,) = sqlx::query_as("SELECT SUM(liability_lamports) FROM doublezero_fees")
-            .fetch_one(&self.pool)
-            .await
-            .unwrap_or((None,));
+    pub async fn get_total_expenses_lamports_up_to(&self, max_epoch: u64) -> Result<u64> {
+        let max_epoch_i64 = (max_epoch.min(i64::MAX as u64)) as i64;
+        let vote_costs: (Option<i64>,) =
+            sqlx::query_as("SELECT SUM(total_fee_lamports) FROM vote_costs WHERE epoch <= ?")
+                .bind(max_epoch_i64)
+                .fetch_one(&self.pool)
+                .await?;
+        Ok(vote_costs.0.unwrap_or(0).max(0) as u64)
+    }
 
-        Ok(vote_costs
-            .0
-            .unwrap_or(0)
-            .saturating_add(doublezero.0.unwrap_or(0))
-            .max(0) as u64)
+    pub async fn get_total_doublezero_liability_lamports_up_to(&self, max_epoch: u64) -> Result<u64> {
+        let max_epoch_i64 = (max_epoch.min(i64::MAX as u64)) as i64;
+        let row: (Option<i64>,) =
+            sqlx::query_as("SELECT SUM(liability_lamports) FROM doublezero_fees WHERE epoch <= ?")
+                .bind(max_epoch_i64)
+                .fetch_one(&self.pool)
+                .await
+                .unwrap_or((None,));
+        Ok(row.0.unwrap_or(0).max(0) as u64)
     }
 
     /// Get total lifetime withdrawals in lamports
     /// Includes: transfers to exchanges or personal wallets
+    #[allow(dead_code)]
     pub async fn get_total_withdrawals_lamports(&self, config: &Config) -> Result<u64> {
         // Avoid relying on stored categories (which may be missing/wrong in older caches).
         // Treat withdrawals as SOL leaving our validator treasury (vote/identity/withdraw authority)
         // to external destinations. Exclude known internal routing destinations:
         // - our core accounts
         // - our stake accounts
-        // - known DeFi protocol addresses (swap routing, etc.)
+        //
+        // Important: we do NOT exclude DeFi/swaps here. If SOL is sent to a swap pool/router and we
+        // don't also include the resulting token holdings in the position snapshot, excluding those
+        // destinations would make reconciliation look artificially "high" (missing withdrawals).
+        // If/when we add comprehensive SPL-token balance tracking, we can revisit this.
         //
         // Note: transfers to the personal wallet are counted as withdrawals because the personal
         // wallet is not part of the validator position snapshot.
@@ -1417,6 +1749,14 @@ impl Cache {
         internal.insert(config.identity.to_string());
         internal.insert(config.withdraw_authority.to_string());
 
+        // Token routing often involves wrapping SOL into the wallet's wSOL ATA or moving SOL through
+        // other common token ATAs. Those are still internal assets and should not be treated as withdrawals.
+        for wallet in [&config.vote_account, &config.identity, &config.withdraw_authority] {
+            for ata in crate::positions::compute_common_atas(wallet) {
+                internal.insert(ata);
+            }
+        }
+
         // Stake accounts are owned by the same withdraw authority and are part of validator assets.
         // If we classify transfers to stake accounts as withdrawals, reconciliation will be wrong.
         let stake_rows: Vec<(String,)> = sqlx::query_as("SELECT account FROM stake_accounts")
@@ -1424,11 +1764,6 @@ impl Cache {
             .await
             .unwrap_or_default();
         for (addr,) in stake_rows {
-            internal.insert(addr);
-        }
-
-        // Known DeFi protocols are internal routing destinations for swaps, not true withdrawals.
-        for addr in crate::addresses::get_defi_protocol_addresses() {
             internal.insert(addr);
         }
 
@@ -1467,33 +1802,186 @@ impl Cache {
         Ok(total)
     }
 
-    /// Get total lifetime deposits in lamports
-    /// Includes:
-    /// - transfers from personal wallet to validator accounts (capital contributions)
-    /// - SFDP reimbursements to validator accounts (vote cost reimbursements)
-    pub async fn get_total_deposits_lamports(&self, config: &Config) -> Result<u64> {
-        // Compute deposits as transfers FROM the configured personal wallet (and the SFDP reimbursement wallet)
-        // TO our validator accounts.
-        let deposits: (Option<i64>,) = sqlx::query_as(
-            "SELECT SUM(amount_lamports) FROM sol_transfers
-             WHERE from_address IN (?, ?)
-             AND to_address IN (?, ?, ?)",
+    pub async fn get_total_withdrawals_lamports_up_to(&self, config: &Config, max_slot: u64) -> Result<u64> {
+        // Same logic as `get_total_withdrawals_lamports`, but bounded by slot for snapshot consistency.
+        let mut internal: std::collections::HashSet<String> = std::collections::HashSet::new();
+        internal.insert(config.vote_account.to_string());
+        internal.insert(config.identity.to_string());
+        internal.insert(config.withdraw_authority.to_string());
+
+        for wallet in [&config.vote_account, &config.identity, &config.withdraw_authority] {
+            for ata in crate::positions::compute_common_atas(wallet) {
+                internal.insert(ata);
+            }
+        }
+
+        let stake_rows: Vec<(String,)> = sqlx::query_as("SELECT account FROM stake_accounts")
+            .fetch_all(&self.pool)
+            .await
+            .unwrap_or_default();
+        for (addr,) in stake_rows {
+            internal.insert(addr);
+        }
+
+        let from_vote = config.vote_account.to_string();
+        let from_identity = config.identity.to_string();
+        let from_withdraw = config.withdraw_authority.to_string();
+        let personal_wallet = config.personal_wallet.to_string();
+
+        let rows: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT to_address, amount_lamports
+             FROM sol_transfers
+             WHERE slot <= ?
+               AND from_address IN (?, ?, ?)",
         )
-        .bind(config.personal_wallet.to_string())
-        .bind(constants::SFDP_REIMBURSEMENT)
+        .bind(max_slot as i64)
+        .bind(from_vote)
+        .bind(from_identity)
+        .bind(from_withdraw)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut total: u64 = 0;
+        for (to_str, amount) in rows {
+            if amount <= 0 {
+                continue;
+            }
+            if to_str == personal_wallet {
+                total = total.saturating_add(amount as u64);
+                continue;
+            }
+            if !internal.contains(&to_str) {
+                total = total.saturating_add(amount as u64);
+            }
+        }
+
+        Ok(total)
+    }
+
+    /// Get total lifetime deposits in lamports
+    ///
+    /// For reconciliation, "deposits" means any external SOL inflow to the validator treasury
+    /// (vote/identity/withdraw authority). This includes:
+    /// - transfers from the configured personal wallet (capital contributions)
+    /// - SFDP reimbursements to validator accounts (vote cost reimbursements)
+    /// - swap/DeFi proceeds that return SOL to our treasury accounts
+    ///
+    /// Note: we exclude transfers from internal addresses (core accounts, stake accounts, common ATAs)
+    /// and exclude known Jito MEV distribution addresses to avoid double-counting with `mev_claims`.
+    #[allow(dead_code)]
+    pub async fn get_total_deposits_lamports(&self, config: &Config) -> Result<u64> {
+        let mut internal: std::collections::HashSet<String> = std::collections::HashSet::new();
+        internal.insert(config.vote_account.to_string());
+        internal.insert(config.identity.to_string());
+        internal.insert(config.withdraw_authority.to_string());
+
+        for wallet in [&config.vote_account, &config.identity, &config.withdraw_authority] {
+            for ata in crate::positions::compute_common_atas(wallet) {
+                internal.insert(ata);
+            }
+        }
+
+        let stake_rows: Vec<(String,)> = sqlx::query_as("SELECT account FROM stake_accounts")
+            .fetch_all(&self.pool)
+            .await
+            .unwrap_or_default();
+        for (addr,) in stake_rows {
+            internal.insert(addr);
+        }
+
+        let rows: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT from_address, amount_lamports
+             FROM sol_transfers
+             WHERE to_address IN (?, ?, ?)",
+        )
         .bind(config.vote_account.to_string())
         .bind(config.identity.to_string())
         .bind(config.withdraw_authority.to_string())
-        .fetch_one(&self.pool)
-        .await
-        .unwrap_or((None,));
+        .fetch_all(&self.pool)
+        .await?;
 
-        Ok(deposits.0.unwrap_or(0).max(0) as u64)
+        let mut total: u64 = 0;
+        for (from_str, amount) in rows {
+            if amount <= 0 {
+                continue;
+            }
+            if internal.contains(&from_str) {
+                continue;
+            }
+
+            // Avoid double-counting MEV deposits: those are accounted via `mev_claims`.
+            if let Ok(pk) = solana_sdk::pubkey::Pubkey::from_str(&from_str)
+                && crate::addresses::is_jito(&pk)
+            {
+                continue;
+            }
+
+            total = total.saturating_add(amount as u64);
+        }
+
+        Ok(total)
+    }
+
+    pub async fn get_total_deposits_lamports_up_to(&self, config: &Config, max_slot: u64) -> Result<u64> {
+        let mut internal: std::collections::HashSet<String> = std::collections::HashSet::new();
+        internal.insert(config.vote_account.to_string());
+        internal.insert(config.identity.to_string());
+        internal.insert(config.withdraw_authority.to_string());
+
+        for wallet in [&config.vote_account, &config.identity, &config.withdraw_authority] {
+            for ata in crate::positions::compute_common_atas(wallet) {
+                internal.insert(ata);
+            }
+        }
+
+        let stake_rows: Vec<(String,)> = sqlx::query_as("SELECT account FROM stake_accounts")
+            .fetch_all(&self.pool)
+            .await
+            .unwrap_or_default();
+        for (addr,) in stake_rows {
+            internal.insert(addr);
+        }
+
+        let rows: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT from_address, amount_lamports
+             FROM sol_transfers
+             WHERE slot <= ?
+               AND to_address IN (?, ?, ?)",
+        )
+        .bind(max_slot as i64)
+        .bind(config.vote_account.to_string())
+        .bind(config.identity.to_string())
+        .bind(config.withdraw_authority.to_string())
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut total: u64 = 0;
+        for (from_str, amount) in rows {
+            if amount <= 0 {
+                continue;
+            }
+            if internal.contains(&from_str) {
+                continue;
+            }
+            if let Ok(pk) = solana_sdk::pubkey::Pubkey::from_str(&from_str)
+                && crate::addresses::is_jito(&pk)
+            {
+                continue;
+            }
+            total = total.saturating_add(amount as u64);
+        }
+
+        Ok(total)
     }
 
     /// Get all income/expense data for reconciliation
-    pub async fn get_reconciliation_data(&self, config: &Config) -> Result<crate::positions::IncomeData> {
-        let total_income = self.get_total_income_lamports().await?;
+    #[allow(dead_code)]
+    pub async fn get_reconciliation_data(
+        &self,
+        config: &Config,
+        jitosol_rate: f64,
+    ) -> Result<crate::positions::IncomeData> {
+        let total_income = self.get_total_income_lamports(config, jitosol_rate).await?;
         let total_expenses = self.get_total_expenses_lamports().await?;
         let total_withdrawals = self.get_total_withdrawals_lamports(config).await?;
         let total_deposits = self.get_total_deposits_lamports(config).await?;
@@ -1503,7 +1991,114 @@ impl Cache {
             total_expenses_lamports: total_expenses,
             total_withdrawals_lamports: total_withdrawals,
             total_deposits_lamports: total_deposits,
+            token_deposits_lamports: 0,
+            internal_adjustment_lamports: 0,
         })
+    }
+
+    pub async fn get_reconciliation_data_at_slot(
+        &self,
+        config: &Config,
+        jitosol_rate: f64,
+        max_slot: u64,
+    ) -> Result<crate::positions::IncomeData> {
+        let max_epoch = max_slot / constants::SLOTS_PER_EPOCH;
+
+        let total_income = self
+            .get_total_income_lamports_up_to(config, jitosol_rate, max_epoch, max_slot)
+            .await?;
+        let total_expenses = self.get_total_expenses_lamports_up_to(max_epoch).await?;
+        let total_withdrawals = self.get_total_withdrawals_lamports_up_to(config, max_slot).await?;
+        let sol_deposits = self.get_total_deposits_lamports_up_to(config, max_slot).await?;
+        let token_deposits = self
+            .get_jitosol_token_deposits_value_lamports_up_to_slot(config, jitosol_rate, max_slot)
+            .await?;
+        let total_deposits = sol_deposits.saturating_add(token_deposits);
+        let internal_adjustment = self
+            .get_jitosol_purchase_adjustment_lamports_up_to_slot(config, max_slot)
+            .await?
+            .min(i64::MAX as u64) as i64;
+
+        Ok(crate::positions::IncomeData {
+            total_income_lamports: total_income,
+            total_expenses_lamports: total_expenses,
+            total_withdrawals_lamports: total_withdrawals,
+            total_deposits_lamports: total_deposits,
+            token_deposits_lamports: token_deposits,
+            internal_adjustment_lamports: internal_adjustment,
+        })
+    }
+
+    /// Value (in lamports) of external jitoSOL transferred into the validator treasury.
+    ///
+    /// This captures cases where jitoSOL is acquired outside the treasury (e.g. personal wallet)
+    /// and then transferred into identity/withdraw authority, which would otherwise appear as an
+    /// unexplained surplus when jitoSOL is included in assets.
+    ///
+    /// Approximation: sum net jitoSOL delta across our owners for transactions where our owner SOL
+    /// delta is exactly 0 (we did not pay a fee and did not move SOL). Internal transfers between
+    /// our owners net to ~0 under this rule.
+    pub async fn get_jitosol_token_deposits_value_lamports_up_to_slot(
+        &self,
+        config: &Config,
+        jitosol_rate: f64,
+        max_slot: u64,
+    ) -> Result<u64> {
+        let jitosol_mint = Pubkey::from_str(constants::JITOSOL_MINT).expect("Invalid JITOSOL_MINT constant");
+
+        let row: (Option<i64>,) = sqlx::query_as(
+            "SELECT SUM(delta_amount) AS net_in
+             FROM token_flows
+             WHERE slot <= ?
+               AND mint = ?
+               AND owner IN (?, ?)
+               AND owner_sol_delta_lamports = 0",
+        )
+        .bind(max_slot as i64)
+        .bind(jitosol_mint.to_string())
+        .bind(config.identity.to_string())
+        .bind(config.withdraw_authority.to_string())
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or((None,));
+
+        let net_token_units = row.0.unwrap_or(0).max(0) as u64;
+        Ok(((net_token_units as f64) * jitosol_rate).min(u64::MAX as f64) as u64)
+    }
+
+    /// If SOL is swapped into jitoSOL (which we include in assets), the outgoing SOL transfer often
+    /// looks like a "withdrawal" to a DeFi router/pool. To keep reconciliation accurate, add an
+    /// internal adjustment equal to the SOL outflow associated with jitoSOL inflows.
+    ///
+    /// We approximate "purchase-like" inflows as: jitoSOL delta > 0 and owner SOL delta is more
+    /// negative than the reward-like threshold (i.e., not just fees/rent).
+    pub async fn get_jitosol_purchase_adjustment_lamports_up_to_slot(
+        &self,
+        config: &Config,
+        max_slot: u64,
+    ) -> Result<u64> {
+        let jitosol_mint = Pubkey::from_str(constants::JITOSOL_MINT).expect("Invalid JITOSOL_MINT constant");
+        let threshold = constants::TOKEN_REWARD_MAX_OWNER_SOL_OUT_LAMPORTS.abs();
+
+        let row: (Option<i64>,) = sqlx::query_as(
+            "SELECT SUM(-owner_sol_delta_lamports) AS sol_spent
+             FROM token_flows
+             WHERE slot <= ?
+               AND mint = ?
+               AND delta_amount > 0
+               AND owner IN (?, ?)
+               AND owner_sol_delta_lamports < ?",
+        )
+        .bind(max_slot as i64)
+        .bind(jitosol_mint.to_string())
+        .bind(config.identity.to_string())
+        .bind(config.withdraw_authority.to_string())
+        .bind(-threshold)
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or((None,));
+
+        Ok(row.0.unwrap_or(0).max(0) as u64)
     }
 
     /// Get external transfer summary for reconciliation
@@ -1604,6 +2199,10 @@ impl Cache {
         let epoch_rewards: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM epoch_rewards")
             .fetch_one(&self.pool)
             .await?;
+        let stake_rewards: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM stake_rewards")
+            .fetch_one(&self.pool)
+            .await
+            .unwrap_or((0,));
         let leader_fees: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM leader_fees")
             .fetch_one(&self.pool)
             .await?;
@@ -1621,6 +2220,10 @@ impl Cache {
         let vote_costs: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM vote_costs")
             .fetch_one(&self.pool)
             .await?;
+        let token_flows: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM token_flows")
+            .fetch_one(&self.pool)
+            .await
+            .unwrap_or((0,));
         let prices: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM prices")
             .fetch_one(&self.pool)
             .await?;
@@ -1638,16 +2241,26 @@ impl Cache {
 
         Ok(CacheStats {
             epoch_rewards: epoch_rewards.0 as u64,
+            stake_rewards: stake_rewards.0 as u64,
             leader_fees: leader_fees.0 as u64,
             mev_claims: mev_claims.0 as u64,
             bam_claims: bam_claims.0 as u64,
             doublezero_fees: doublezero_fees.0 as u64,
             vote_costs: vote_costs.0 as u64,
+            token_flows: token_flows.0 as u64,
             prices: prices.0 as u64,
             expenses: expenses.0 as u64,
             recurring_expenses: recurring_expenses.0 as u64,
             transfers: transfers.0 as u64,
         })
+    }
+
+    pub async fn get_max_sol_transfer_slot(&self) -> Result<Option<u64>> {
+        let row: (Option<i64>,) = sqlx::query_as("SELECT MAX(slot) FROM sol_transfers")
+            .fetch_one(&self.pool)
+            .await
+            .unwrap_or((None,));
+        Ok(row.0.and_then(|s| if s >= 0 { Some(s as u64) } else { None }))
     }
 }
 
@@ -1714,11 +2327,13 @@ fn string_to_category(s: &str) -> AddressCategory {
 #[derive(Debug)]
 pub struct CacheStats {
     pub epoch_rewards: u64,
+    pub stake_rewards: u64,
     pub leader_fees: u64,
     pub mev_claims: u64,
     pub bam_claims: u64,
     pub doublezero_fees: u64,
     pub vote_costs: u64,
+    pub token_flows: u64,
     pub prices: u64,
     pub expenses: u64,
     pub recurring_expenses: u64,
@@ -1729,13 +2344,15 @@ impl std::fmt::Display for CacheStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} rewards, {} leader fees, {} MEV claims, {} BAM claims, {} DoubleZero fees, {} vote costs, {} transfers, {} prices, {} expenses, {} recurring",
+            "{} rewards, {} stake rewards, {} leader fees, {} MEV claims, {} BAM claims, {} DoubleZero fees, {} vote costs, {} token flows, {} transfers, {} prices, {} expenses, {} recurring",
             self.epoch_rewards,
+            self.stake_rewards,
             self.leader_fees,
             self.mev_claims,
             self.bam_claims,
             self.doublezero_fees,
             self.vote_costs,
+            self.token_flows,
             self.transfers,
             self.prices,
             self.expenses,
