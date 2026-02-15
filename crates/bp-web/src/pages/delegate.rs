@@ -1,5 +1,6 @@
 use crate::config::CONFIG;
 use leptos::prelude::*;
+use leptos_meta::{Link, Meta, Title};
 
 use crate::components::{CopyButton, ExternalLink, Section};
 
@@ -7,8 +8,12 @@ use crate::components::{CopyButton, ExternalLink, Section};
 pub fn DelegatePage() -> impl IntoView {
     let twitter_url = format!("https://x.com/{}", CONFIG.contact.twitter);
     let twitter_url2 = twitter_url.clone();
+    let canonical = format!("{}/delegate", CONFIG.base_url);
 
     view! {
+        <Title text="Delegate SOL to Block Parliament - Staking Guide" />
+        <Meta name="description" content="Delegate SOL to Block Parliament validator. Non-custodial native staking and liquid staking guides for Phantom, Solflare, and other wallets." />
+        <Link rel="canonical" href=canonical />
         <main class="max-w-[80ch] mx-auto px-4 py-4 md:py-8">
             // Header - responsive, uses Section-style pattern instead of fixed-width ASCII box
             <header class="mb-8 text-center">

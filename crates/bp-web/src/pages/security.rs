@@ -1,5 +1,6 @@
 use crate::config::CONFIG;
 use leptos::prelude::*;
+use leptos_meta::{Link, Meta, Title};
 
 use crate::components::Section;
 
@@ -8,8 +9,12 @@ pub fn SecurityPage() -> impl IntoView {
     let twitter_url = format!("https://x.com/{}", CONFIG.contact.twitter);
     let twitter_url2 = twitter_url.clone();
     let twitter_url3 = twitter_url.clone();
+    let canonical = format!("{}/security", CONFIG.base_url);
 
     view! {
+        <Title text="Security Policy - Block Parliament Validator" />
+        <Meta name="description" content="Block Parliament validator security policy. Key management, infrastructure hardening, access control, monitoring, and incident response procedures." />
+        <Link rel="canonical" href=canonical />
         <main class="max-w-[80ch] mx-auto px-4 py-4 md:py-8">
             // Header - responsive, matches Section-style pattern
             <header class="mb-8 text-center">

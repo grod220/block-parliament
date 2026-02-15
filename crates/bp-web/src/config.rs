@@ -2,6 +2,7 @@
 pub struct Config {
     pub name: &'static str,
     pub tagline: &'static str,
+    pub base_url: &'static str,
 
     // Pubkeys - everything else is fetched from APIs using these
     pub identity: &'static str,
@@ -46,6 +47,7 @@ pub struct ChangelogEntry {
 pub static CONFIG: Config = Config {
     name: "Block Parliament",
     tagline: "Anza core dev validator",
+    base_url: "https://blockparliament.com",
 
     identity: "mD1afZhSisoXfJLT8nYwSFANqjr1KPoDUEpYTEfFX1e",
     vote_account: "4PL2ZFoZJHgkbZ54US4qNC58X69Fa1FKtY4CaVKeuQPg",

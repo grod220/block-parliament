@@ -1,13 +1,18 @@
 use crate::config::CONFIG;
 use leptos::prelude::*;
+use leptos_meta::{Link, Meta, Title};
 
 use crate::components::{AnimatedGradientDashBorder, ExternalLink, Metrics, Section};
 
 #[component]
 pub fn HomePage() -> impl IntoView {
     let title = format!("{} \u{1F989}", CONFIG.name); // owl emoji
+    let canonical = format!("{}/", CONFIG.base_url);
 
     view! {
+        <Title text="Block Parliament - Anza Core Dev Validator" />
+        <Meta name="description" content="Block Parliament - Solana validator operated by an Anza core developer. 5% commission, Jito MEV enabled." />
+        <Link rel="canonical" href=canonical />
         <main class="max-w-[80ch] mx-auto px-4 py-4 md:py-8">
             // Header with animated border
             <header class="mb-8 text-center">
