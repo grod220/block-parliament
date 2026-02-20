@@ -38,22 +38,18 @@ pub struct TaxReportData<'a> {
 /// A single row in the tax report CSV.
 struct TaxRow {
     date: String,
-    entry_type: String,     // "Revenue", "Expense", "Return of Capital", or "Reimbursement"
-    category: String,       // e.g. "Withdrawal", "Vote Fees", "DoubleZero", "Hosting"
+    entry_type: String, // "Revenue", "Expense", "Return of Capital", or "Reimbursement"
+    category: String,   // e.g. "Withdrawal", "Vote Fees", "DoubleZero", "Hosting"
     description: String,
     sol_amount: Option<f64>,
     sol_price_usd: Option<f64>,
     usd_value: f64,
-    destination: String,    // for withdrawals
-    tx_signature: String,   // for on-chain events
+    destination: String,  // for withdrawals
+    tx_signature: String, // for on-chain events
 }
 
 /// Generate the tax report CSV and print a console summary.
-pub fn generate_tax_report(
-    output_dir: &Path,
-    data: &TaxReportData,
-    year_filter: Option<i32>,
-) -> Result<()> {
+pub fn generate_tax_report(output_dir: &Path, data: &TaxReportData, year_filter: Option<i32>) -> Result<()> {
     let mut rows = Vec::new();
     let mut skipped_unknown_dates: usize = 0;
 
@@ -76,18 +72,30 @@ pub fn generate_tax_report(
     );
 
     // ── Expenses: vote fees (SOL burned on-chain, net of SFDP) ─────────
-    add_vote_cost_rows(&mut rows, data.vote_costs, data.prices, data.config, year_filter, &mut skipped_unknown_dates);
+    add_vote_cost_rows(
+        &mut rows,
+        data.vote_costs,
+        data.prices,
+        data.config,
+        year_filter,
+        &mut skipped_unknown_dates,
+    );
 
     // ── Expenses: DoubleZero payments (SOL to third-party PDA) ─────────
-    add_doublezero_rows(&mut rows, data.doublezero_fees, data.prices, year_filter, &mut skipped_unknown_dates);
+    add_doublezero_rows(
+        &mut rows,
+        data.doublezero_fees,
+        data.prices,
+        year_filter,
+        &mut skipped_unknown_dates,
+    );
 
     // ── Expenses: off-chain costs (hosting, contractors, hardware, etc.)
     add_offchain_expense_rows(&mut rows, data.expenses, year_filter, &mut skipped_unknown_dates);
 
     // Sort all rows by date, then revenue before expenses
     rows.sort_by(|a, b| {
-        a.date.cmp(&b.date)
-            .then_with(|| b.entry_type.cmp(&a.entry_type)) // "Revenue" > "Expense" → revenue first
+        a.date.cmp(&b.date).then_with(|| b.entry_type.cmp(&a.entry_type)) // "Revenue" > "Expense" → revenue first
     });
 
     // Write CSV
@@ -233,13 +241,12 @@ fn add_vote_cost_rows(
         let description = if coverage > 0.0 {
             format!(
                 "Vote transaction fees epoch {} ({} votes, {:.0}% SFDP-reimbursed)",
-                vc.epoch, vc.vote_count, coverage * 100.0
+                vc.epoch,
+                vc.vote_count,
+                coverage * 100.0
             )
         } else {
-            format!(
-                "Vote transaction fees epoch {} ({} votes)",
-                vc.epoch, vc.vote_count
-            )
+            format!("Vote transaction fees epoch {} ({} votes)", vc.epoch, vc.vote_count)
         };
 
         rows.push(TaxRow {
@@ -262,7 +269,8 @@ fn add_vote_cost_rows(
                 category: "SFDP Vote Fee Reimbursement".to_string(),
                 description: format!(
                     "SFDP reimbursement epoch {} ({:.0}% coverage)",
-                    vc.epoch, coverage * 100.0
+                    vc.epoch,
+                    coverage * 100.0
                 ),
                 sol_amount: Some(reimbursed_sol),
                 sol_price_usd: Some(price),
@@ -334,9 +342,7 @@ fn add_offchain_expense_rows(
 // ─── Console summary ──────────────────────────────────────────────────────
 
 fn print_tax_summary(rows: &[TaxRow], year_filter: Option<i32>) {
-    let year_label = year_filter
-        .map(|y| format!(" ({})", y))
-        .unwrap_or_default();
+    let year_label = year_filter.map(|y| format!(" ({})", y)).unwrap_or_default();
 
     println!("\n══════════════════════════════════════════════════");
     println!("  TAX REPORT SUMMARY{}", year_label);
@@ -345,10 +351,7 @@ fn print_tax_summary(rows: &[TaxRow], year_filter: Option<i32>) {
     // Revenue
     let revenue_rows: Vec<&TaxRow> = rows.iter().filter(|r| r.entry_type == "Revenue").collect();
     let total_revenue_usd: f64 = revenue_rows.iter().map(|r| r.usd_value).sum();
-    let total_revenue_sol: f64 = revenue_rows
-        .iter()
-        .filter_map(|r| r.sol_amount)
-        .sum();
+    let total_revenue_sol: f64 = revenue_rows.iter().filter_map(|r| r.sol_amount).sum();
 
     println!("\n  REVENUE (External Withdrawals)");
     println!("  ─────────────────────────────────────────────");
@@ -380,7 +383,9 @@ fn print_tax_summary(rows: &[TaxRow], year_filter: Option<i32>) {
         println!("  ─────────────────────────────────────────────");
         println!(
             "    SFDP:              {} entries  {:.6} SOL = ${:.2}",
-            reimb_rows.len(), total_reimb_sol, total_reimb_usd
+            reimb_rows.len(),
+            total_reimb_sol,
+            total_reimb_usd
         );
     }
 
@@ -427,10 +432,7 @@ fn print_tax_summary(rows: &[TaxRow], year_filter: Option<i32>) {
     // so adding them back gives the true out-of-pocket expense burden.
     let net = total_revenue_usd + total_reimb_usd - total_expense_usd;
     println!("\n  ═════════════════════════════════════════════");
-    println!(
-        "  NET TAXABLE INCOME:                ${:.2}",
-        net
-    );
+    println!("  NET TAXABLE INCOME:                ${:.2}", net);
     println!("  ═════════════════════════════════════════════");
 }
 

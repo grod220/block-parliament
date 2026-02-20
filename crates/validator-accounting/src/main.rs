@@ -412,7 +412,12 @@ async fn main() -> Result<()> {
 }
 
 /// Handle expense management subcommands
-async fn handle_command(command: Command, cache: &Cache, config_path: Option<&PathBuf>, output_dir: &Path) -> Result<()> {
+async fn handle_command(
+    command: Command,
+    cache: &Cache,
+    config_path: Option<&PathBuf>,
+    output_dir: &Path,
+) -> Result<()> {
     match command {
         Command::Expense { action } => handle_expense_command(action, cache).await,
         Command::Recurring { action } => handle_recurring_command(action, cache).await,
@@ -420,9 +425,12 @@ async fn handle_command(command: Command, cache: &Cache, config_path: Option<&Pa
         Command::VoteCosts { action } => handle_vote_costs_command(action, cache).await,
         Command::Dune { action } => handle_dune_command(action, cache, config_path).await,
         Command::Position { action } => handle_position_command(action, cache, config_path).await,
-        Command::Tax { year, rpc_url, no_cache, verbose } => {
-            handle_tax_command(cache, config_path, output_dir, year, rpc_url, no_cache, verbose).await
-        }
+        Command::Tax {
+            year,
+            rpc_url,
+            no_cache,
+            verbose,
+        } => handle_tax_command(cache, config_path, output_dir, year, rpc_url, no_cache, verbose).await,
     }
 }
 
@@ -1707,6 +1715,7 @@ async fn handle_tax_command(
     println!("Identity: {}", config.identity);
     println!("RPC: {}\n", mask_api_key(&config.rpc_url));
 
+    #[allow(clippy::collapsible_if)]
     if config.doublezero_enabled && config.doublezero_deposit_account.is_none() {
         if let Some(pda) = doublezero::derive_deposit_account_from_cli(&config.identity, &config.rpc_url) {
             config.doublezero_deposit_account = Some(pda);
@@ -1723,16 +1732,18 @@ async fn handle_tax_command(
 
     // Fetch transfers (to find withdrawals)
     println!("Loading transaction history...");
-    let transfers = fetch_transfers_with_cache(
-        cache, &config, no_cache, verbose, dune_api_key, &config.bootstrap_date,
-    ).await?;
+    let transfers =
+        fetch_transfers_with_cache(cache, &config, no_cache, verbose, dune_api_key, &config.bootstrap_date).await?;
     println!("  Found {} SOL transfers", transfers.len());
 
     let categorized = transactions::categorize_transfers(&transfers, &config);
-    let outgoing_other_count = categorized.other.iter()
+    let outgoing_other_count = categorized
+        .other
+        .iter()
         .filter(|t| config.is_our_account(&t.from) && !config.is_our_account(&t.to))
         .count();
-    println!("  {} external withdrawal(s) identified ({} to known exchanges, {} to other addresses)\n",
+    println!(
+        "  {} external withdrawal(s) identified ({} to known exchanges, {} to other addresses)\n",
         categorized.withdrawals.len() + outgoing_other_count,
         categorized.withdrawals.len(),
         outgoing_other_count,
@@ -1741,9 +1752,20 @@ async fn handle_tax_command(
     // Fetch leader fees (needed for DoubleZero computation)
     println!("Loading leader fees...");
     let leader_fees = fetch_leader_fees_with_cache(
-        cache, &config, start_epoch, end_epoch, current_epoch, no_cache, dune_api_key,
-    ).await.unwrap_or_else(|e| {
-        eprintln!("  Warning: Failed to fetch leader fees: {}. DoubleZero expenses may be incomplete.", e);
+        cache,
+        &config,
+        start_epoch,
+        end_epoch,
+        current_epoch,
+        no_cache,
+        dune_api_key,
+    )
+    .await
+    .unwrap_or_else(|e| {
+        eprintln!(
+            "  Warning: Failed to fetch leader fees: {}. DoubleZero expenses may be incomplete.",
+            e
+        );
         Vec::new()
     });
 
@@ -1774,20 +1796,20 @@ async fn handle_tax_command(
         // Use epoch date range for expansion window (covers full operating period)
         let epoch_start_date = transactions::epoch_to_date(start_epoch);
         let epoch_end_date = transactions::epoch_to_date(end_epoch);
-        let start_month = month_key_from_date(&epoch_start_date)
-            .or_else(|| {
-                recurring.iter()
-                    .filter_map(|r| month_key_from_date(&r.start_date))
-                    .min()
-            });
-        let end_month = month_key_from_date(&epoch_end_date)
-            .or_else(|| {
-                let current_month = Utc::now().date_naive().format("%Y-%m").to_string();
-                recurring.iter()
-                    .filter_map(|r| r.end_date.as_deref().and_then(month_key_from_date))
-                    .max()
-                    .or(Some(current_month))
-            });
+        let start_month = month_key_from_date(&epoch_start_date).or_else(|| {
+            recurring
+                .iter()
+                .filter_map(|r| month_key_from_date(&r.start_date))
+                .min()
+        });
+        let end_month = month_key_from_date(&epoch_end_date).or_else(|| {
+            let current_month = Utc::now().date_naive().format("%Y-%m").to_string();
+            recurring
+                .iter()
+                .filter_map(|r| r.end_date.as_deref().and_then(month_key_from_date))
+                .max()
+                .or(Some(current_month))
+        });
 
         if let (Some(sm), Some(em)) = (start_month, end_month) {
             let expanded = expenses::expand_recurring_expenses(&recurring, &sm, &em);
@@ -1813,11 +1835,16 @@ async fn handle_tax_command(
     println!("Fetching SOL prices...");
     // We need rewards for the price fetcher, but we only need the transfers' dates
     let rewards = fetch_rewards_with_cache(
-        cache, &config, start_epoch, end_epoch, current_epoch, no_cache, dune_api_key,
-    ).await?;
-    let price_cache = fetch_prices_with_cache(
-        cache, &rewards, &transfers, &config.coingecko_api_key, no_cache,
-    ).await?;
+        cache,
+        &config,
+        start_epoch,
+        end_epoch,
+        current_epoch,
+        no_cache,
+        dune_api_key,
+    )
+    .await?;
+    let price_cache = fetch_prices_with_cache(cache, &rewards, &transfers, &config.coingecko_api_key, no_cache).await?;
     println!("  {} daily prices cached\n", price_cache.len());
 
     // Create output dir and generate report

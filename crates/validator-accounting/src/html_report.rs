@@ -166,19 +166,13 @@ pub fn build_timeline(data: &ReportData) -> Vec<TimelineEvent> {
         let gross_usd = cost.total_fee_sol * price;
 
         let parsed = chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d")
-            .unwrap_or_else(|_| {
-                chrono::NaiveDate::parse_from_str(constants::FALLBACK_DATE, "%Y-%m-%d").unwrap()
-            });
+            .unwrap_or_else(|_| chrono::NaiveDate::parse_from_str(constants::FALLBACK_DATE, "%Y-%m-%d").unwrap());
         let coverage = data.config.sfdp_coverage_percent(&parsed);
         let net_usd = gross_usd * (1.0 - coverage);
         let net_sol = cost.total_fee_sol * (1.0 - coverage);
 
         let sublabel = if coverage > 0.0 {
-            Some(format!(
-                "Epoch {} · SFDP {:.0}% offset",
-                cost.epoch,
-                coverage * 100.0
-            ))
+            Some(format!("Epoch {} · SFDP {:.0}% offset", cost.epoch, coverage * 100.0))
         } else {
             Some(format!("Epoch {}", cost.epoch))
         };
