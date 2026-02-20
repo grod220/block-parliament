@@ -11,6 +11,7 @@ mod constants;
 mod doublezero;
 mod dune;
 mod expenses;
+mod html_report;
 mod jito;
 mod leader_fees;
 mod notion;

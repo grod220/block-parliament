@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Block Parliament · Validator Financials</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #0d1117;
+  --surface:   #161b22;
+  --border:    #30363d;
+  --text:      #e6edf3;
+  --muted:     #8b949e;
+  --green:     #4ade80;
+  --red:       #f87171;
+  --neutral:   #64748b;
+  --accent:    #58a6ff;
+  --header-h:  108px;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* ── Sticky header ── */
+#header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 20px 10px;
+  /* min-height so tabs never get clipped on narrow viewports */
+  min-height: var(--header-h);
+}
+
+.header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.header-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.unit-toggle {
+  display: flex;
+  gap: 4px;
+}
+
+.unit-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  padding: 2px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  transition: all 0.15s;
+}
+
+.unit-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.stats-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.stat-card {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+}
+
+.stat-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+
+.stat-value {
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  transition: color 0.2s;
+}
+
+.stat-value.positive { color: var(--green); }
+.stat-value.negative { color: var(--red); }
+.stat-value.neutral  { color: var(--text); }
+
+.period-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.period-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  padding: 2px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  transition: all 0.15s;
+}
+
+/* Hover: accent outline only */
+.period-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Active: filled — visually distinct from hover */
+.period-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* ── Timeline ── */
+#timeline {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 20px 20px 80px;
+}
+
+.month-sep {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 28px 0 6px;
+  padding-top: 4px;
+}
+
+.month-sep-line {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.month-sep-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.month-sep-net {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.month-sep-net.positive { color: var(--green); }
+.month-sep-net.negative { color: var(--red); }
+
+/* ── Event rows ── */
+.event-row {
+  display: grid;
+  grid-template-columns: 88px 20px 1fr auto auto;
+  /* start-alignment so multi-line labels don't float the date/amount up */
+  align-items: start;
+  gap: 0 10px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  transition: background 0.1s;
+}
+
+.event-row:hover {
+  background: var(--surface);
+}
+
+/* Row whose cumulative totals are currently shown in the sticky header */
+.row-anchor {
+  background: var(--surface);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.ev-date {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  padding-top: 1px;
+}
+
+.ev-dot {
+  text-align: center;
+  font-size: 10px;
+  padding-top: 3px;
+}
+
+/* Per-category dot colors */
+.ev-dot[data-type="commission"]          { color: #f59e0b; } /* amber  */
+.ev-dot[data-type="leader_fees"]         { color: #60a5fa; } /* sky    */
+.ev-dot[data-type="mev"]                 { color: #a78bfa; } /* violet */
+.ev-dot[data-type="bam"]                 { color: #22d3ee; } /* cyan   */
+.ev-dot[data-type="vote_cost"]           { color: #fb923c; } /* orange */
+.ev-dot[data-type="doublezero"]          { color: #f43f5e; } /* rose   */
+.ev-dot[data-type="expense"]             { color: #f87171; } /* red    */
+.ev-dot[data-type="seeding"]             { color: #34d399; } /* emerald*/
+.ev-dot[data-type="withdrawal"]          { color: #94a3b8; } /* slate  */
+.ev-dot[data-type="doublezero_payment"]  { color: #818cf8; } /* indigo */
+
+.ev-label {
+  min-width: 0;
+}
+
+.ev-label-main {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ev-label-sub {
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ev-sol {
+  text-align: right;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  padding-top: 1px;
+}
+
+.ev-usd {
+  text-align: right;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  min-width: 80px;
+  padding-top: 1px;
+}
+
+.ev-income  .ev-sol, .ev-income  .ev-usd { color: var(--green); }
+.ev-expense .ev-sol, .ev-expense .ev-usd { color: var(--red); }
+.ev-neutral .ev-sol, .ev-neutral .ev-usd { color: var(--neutral); }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <div class="header-top">
+    <span class="header-title">Block Parliament · Validator Financials</span>
+    <div class="unit-toggle">
+      <button class="unit-btn active" id="btn-usd" onclick="setUnit('usd')">USD</button>
+      <button class="unit-btn" id="btn-sol" onclick="setUnit('sol')">SOL</button>
+    </div>
+  </div>
+
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="stat-label">Net P/L</div>
+      <div class="stat-value" id="stat-profit">$0</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Revenue</div>
+      <div class="stat-value" id="stat-revenue">$0</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Expenses</div>
+      <div class="stat-value" id="stat-expenses">$0</div>
+    </div>
+  </div>
+
+  <div class="period-tabs" id="period-tabs">
+    <!-- injected by JS -->
+  </div>
+</div>
+
+<div id="timeline"></div>
+
+<script>
+const TIMELINE = __TIMELINE_JSON__;
+
+// ── Cached DOM refs ──────────────────────────────────────────────────────────
+// Queried once at startup — these elements never move.
+const profitEl   = document.getElementById('stat-profit');
+const revenueEl  = document.getElementById('stat-revenue');
+const expensesEl = document.getElementById('stat-expenses');
+
+// ── Unit state ──────────────────────────────────────────────────────────────
+let currentUnit = 'usd';
+
+function setUnit(unit) {
+  if (unit === currentUnit) return;
+  // Cancel any in-flight animation so the snap is clean
+  if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+
+  currentUnit = unit;
+  document.getElementById('btn-usd').classList.toggle('active', unit === 'usd');
+  document.getElementById('btn-sol').classList.toggle('active', unit === 'sol');
+
+  document.querySelectorAll('.ev-sol').forEach(el => {
+    el.style.display = unit === 'sol' ? '' : 'none';
+  });
+  document.querySelectorAll('.ev-usd').forEach(el => {
+    el.textContent = unit === 'usd'
+      ? formatUsd(parseFloat(el.dataset.usd))
+      : formatSol(parseFloat(el.dataset.sol));
+  });
+
+  // Update month separator nets
+  document.querySelectorAll('.month-sep-net').forEach(el => {
+    const netUsd = parseFloat(el.dataset.netUsd);
+    el.textContent = (unit === 'usd' ? formatUsd(netUsd) : formatSol(netUsd / solPrice())) + ' net';
+    el.className = 'month-sep-net ' + (netUsd >= 0 ? 'positive' : 'negative');
+  });
+
+  // Snap header to current target in the new unit
+  updateHeaderDisplay(targetProfit, targetRevenue, targetExpenses, true);
+}
+
+// ── Formatting helpers ──────────────────────────────────────────────────────
+function formatUsd(n) {
+  if (n === 0) return '$0';
+  const abs = Math.abs(n);
+  const str = abs >= 1000
+    ? '$' + Math.round(abs).toLocaleString()
+    : '$' + abs.toFixed(2);
+  return n < 0 ? '-' + str : str;
+}
+
+function formatSol(n) {
+  if (n === 0) return '0 SOL';
+  const abs = Math.abs(n);
+  const str = abs.toFixed(abs < 0.01 ? 6 : abs < 1 ? 4 : 3) + ' SOL';
+  return n < 0 ? '-' + str : str;
+}
+
+function formatAmount(usd, sol) {
+  return currentUnit === 'usd' ? formatUsd(usd) : formatSol(sol);
+}
+
+// ── Recent SOL price estimate ────────────────────────────────────────────────
+// Sample the most-recent entries with a non-zero SOL amount and take the
+// median implied price. This is only used for the header SOL display.
+function solPrice() {
+  const candidates = [];
+  for (let i = TIMELINE.length - 1; i >= 0 && candidates.length < 20; i--) {
+    const e = TIMELINE[i];
+    if (e.amount_sol !== 0) {
+      const p = Math.abs(e.amount_usd / e.amount_sol);
+      if (p > 1) candidates.push(p);
+    }
+  }
+  if (!candidates.length) return 150; // reasonable fallback
+  candidates.sort((a, b) => a - b);
+  return candidates[Math.floor(candidates.length / 2)];
+}
+
+// ── Build period tabs ───────────────────────────────────────────────────────
+const years = [...new Set(TIMELINE.map(e => e.date.slice(0,4)).filter(y => y !== '0000'))].sort().reverse();
+const tabsEl = document.getElementById('period-tabs');
+
+function buildTabs(activeYear) {
+  while (tabsEl.firstChild) tabsEl.removeChild(tabsEl.firstChild);
+
+  const allBtn = document.createElement('button');
+  allBtn.className = 'period-btn' + (activeYear === 'all' ? ' active' : '');
+  allBtn.textContent = 'All time';
+  allBtn.onclick = () => render('all');
+  tabsEl.appendChild(allBtn);
+
+  years.forEach(y => {
+    const btn = document.createElement('button');
+    btn.className = 'period-btn' + (activeYear === y ? ' active' : '');
+    btn.textContent = y;
+    btn.onclick = () => render(y);
+    tabsEl.appendChild(btn);
+  });
+}
+
+// ── Render timeline ─────────────────────────────────────────────────────────
+let allRows = [];
+
+function render(yearFilter, { scrollToBottom = false } = {}) {
+  buildTabs(yearFilter);
+
+  // Scroll to top so the header reflects the beginning of the filtered period.
+  // (Skip on initial load — we'll scroll to the bottom instead.)
+  if (!scrollToBottom) window.scrollTo(0, 0);
+
+  const events = yearFilter === 'all'
+    ? TIMELINE
+    : TIMELINE.filter(e => e.date.startsWith(yearFilter));
+
+  const container = document.getElementById('timeline');
+  while (container.firstChild) container.removeChild(container.firstChild);
+  allRows = [];
+
+  if (events.length === 0) {
+    const msg = document.createElement('div');
+    msg.style.cssText = 'text-align:center;color:var(--muted);padding:60px 0;font-size:14px';
+    msg.textContent = 'No events found for the selected period.';
+    container.appendChild(msg);
+    // Reset header so it doesn't show a previous period's totals
+    setHeaderInstant(0, 0, 0);
+    return;
+  }
+
+  // Group by month (events are oldest-first)
+  const byMonth = new Map();
+  for (const ev of events) {
+    const mo = ev.date.slice(0, 7);
+    if (!byMonth.has(mo)) byMonth.set(mo, []);
+    byMonth.get(mo).push(ev);
+  }
+
+  for (const [mo, evs] of byMonth) {
+    container.appendChild(buildMonthSep(mo, evs));
+    for (const ev of evs) {
+      const row = buildRow(ev);
+      container.appendChild(row);
+      allRows.push(row);
+    }
+  }
+
+  // Recompute period-relative running totals from the filtered event set.
+  // The Rust-precomputed cumulative_* fields are all-time totals; reading them
+  // directly in a year-filtered view would show e.g. 3 years of revenue in
+  // the "2025" tab. Instead we walk the filtered events and overwrite each
+  // row's dataset with period-local sums.
+  let pProfit = 0, pRevenue = 0, pExpenses = 0;
+  for (let i = 0; i < events.length; i++) {
+    const ev = events[i];
+    if (ev.is_pnl) {
+      if (ev.amount_usd >= 0) pRevenue += ev.amount_usd;
+      else pExpenses += Math.abs(ev.amount_usd);
+      pProfit += ev.amount_usd;
+    }
+    // allRows[i] maps 1-to-1 with events[i] (separators are not in allRows)
+    allRows[i].dataset.profit   = pProfit.toFixed(2);
+    allRows[i].dataset.revenue  = pRevenue.toFixed(2);
+    allRows[i].dataset.expenses = pExpenses.toFixed(2);
+  }
+
+  // Seed header with the period's final totals (read from the recomputed last row)
+  const lastRow = allRows[allRows.length - 1];
+  const seedP = parseFloat(lastRow.dataset.profit);
+  const seedR = parseFloat(lastRow.dataset.revenue);
+  const seedE = parseFloat(lastRow.dataset.expenses);
+  setHeaderInstant(seedP, seedR, seedE);
+  targetProfit   = seedP;
+  targetRevenue  = seedR;
+  targetExpenses = seedE;
+
+  // Mark the last row as the initial anchor (header reflects totals through it).
+  anchorIdx = null;
+  setAnchor(allRows.length - 1);
+}
+
+function monthLabel(mo) {
+  const [y, m] = mo.split('-');
+  const months = ['January','February','March','April','May','June',
+                  'July','August','September','October','November','December'];
+  return months[parseInt(m, 10) - 1] + ' ' + y;
+}
+
+function buildMonthSep(mo, evs) {
+  let netUsd = 0;
+  for (const ev of evs) { if (ev.is_pnl) netUsd += ev.amount_usd; }
+
+  const div = document.createElement('div');
+  div.className = 'month-sep';
+  div.dataset.month = mo;
+
+  const line1 = document.createElement('div');
+  line1.className = 'month-sep-line';
+
+  const lbl = document.createElement('span');
+  lbl.className = 'month-sep-label';
+  lbl.textContent = monthLabel(mo);
+
+  const netEl = document.createElement('span');
+  netEl.className = 'month-sep-net ' + (netUsd >= 0 ? 'positive' : 'negative');
+  // Store USD net so setUnit() can reformat it without re-iterating events
+  netEl.dataset.netUsd = netUsd;
+  netEl.textContent = (currentUnit === 'usd' ? formatUsd(netUsd) : formatSol(netUsd / solPrice())) + ' net';
+
+  const line2 = document.createElement('div');
+  line2.className = 'month-sep-line';
+
+  div.appendChild(line1);
+  div.appendChild(lbl);
+  div.appendChild(netEl);
+  div.appendChild(line2);
+  return div;
+}
+
+function rowClass(ev) {
+  if (!ev.is_pnl) return 'ev-neutral';
+  return ev.amount_usd >= 0 ? 'ev-income' : 'ev-expense';
+}
+
+function dotGlyph(ev) {
+  if (!ev.is_pnl) return '○';
+  // Use ● for both income and expense — CSS color distinguishes them (green/red).
+  // ◌ is reserved for genuine zero-amount P&L events (e.g. fully-SFDP vote costs).
+  if (ev.amount_usd === 0) return '◌';
+  return '●';
+}
+
+function buildRow(ev) {
+  const div = document.createElement('div');
+  div.className = 'event-row ' + rowClass(ev);
+  div.dataset.profit   = ev.cumulative_profit_usd.toFixed(2);
+  div.dataset.revenue  = ev.cumulative_revenue_usd.toFixed(2);
+  div.dataset.expenses = ev.cumulative_expenses_usd.toFixed(2);
+
+  const dateEl = document.createElement('span');
+  dateEl.className = 'ev-date';
+  dateEl.textContent = ev.date;
+
+  const dotEl = document.createElement('span');
+  dotEl.className = 'ev-dot';
+  dotEl.dataset.type = ev.event_type;
+  dotEl.textContent = dotGlyph(ev);
+
+  const labelDiv = document.createElement('div');
+  labelDiv.className = 'ev-label';
+  const mainEl = document.createElement('div');
+  mainEl.className = 'ev-label-main';
+  mainEl.textContent = ev.label;
+  labelDiv.appendChild(mainEl);
+  if (ev.sublabel) {
+    const subEl = document.createElement('div');
+    subEl.className = 'ev-label-sub';
+    subEl.textContent = ev.sublabel;
+    labelDiv.appendChild(subEl);
+  }
+
+  const solEl = document.createElement('span');
+  solEl.className = 'ev-sol';
+  solEl.dataset.sol = ev.amount_sol;
+  solEl.textContent = formatSol(ev.amount_sol);
+  solEl.style.display = currentUnit === 'sol' ? '' : 'none';
+
+  const usdEl = document.createElement('span');
+  usdEl.className = 'ev-usd';
+  usdEl.dataset.sol = ev.amount_sol;
+  usdEl.dataset.usd = ev.amount_usd;
+  usdEl.textContent = formatAmount(ev.amount_usd, ev.amount_sol);
+
+  div.appendChild(dateEl);
+  div.appendChild(dotEl);
+  div.appendChild(labelDiv);
+  div.appendChild(solEl);
+  div.appendChild(usdEl);
+  return div;
+}
+
+// ── Sticky header rewind ────────────────────────────────────────────────────
+let targetProfit   = 0;
+let targetRevenue  = 0;
+let targetExpenses = 0;
+let displayProfit   = 0;
+let displayRevenue  = 0;
+let displayExpenses = 0;
+let rafId = null;
+
+// Find the last (newest, bottommost) row still visible in the viewport.
+// For a chronological (oldest→newest) timeline this gives the most recent event
+// currently in view, so the header totals build up as you scroll forward.
+function findBottomRow() {
+  const viewBottom = window.innerHeight;
+  let lo = 0, hi = allRows.length - 1, found = null;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const rect = allRows[mid].getBoundingClientRect();
+    if (rect.top < viewBottom) { found = mid; lo = mid + 1; }
+    else { hi = mid - 1; }
+  }
+  return found;
+}
+
+function updateHeaderDisplay(profit, revenue, expenses, instant) {
+  if (instant) {
+    displayProfit = profit; displayRevenue = revenue; displayExpenses = expenses;
+    paintHeader();
+    return;
+  }
+  targetProfit   = profit;
+  targetRevenue  = revenue;
+  targetExpenses = expenses;
+  if (!rafId) rafId = requestAnimationFrame(animateHeader);
+}
+
+function animateHeader() {
+  rafId = null;
+  const LERP = 0.22;
+  displayProfit   += (targetProfit   - displayProfit)   * LERP;
+  displayRevenue  += (targetRevenue  - displayRevenue)  * LERP;
+  displayExpenses += (targetExpenses - displayExpenses) * LERP;
+  paintHeader();
+
+  const dx = Math.abs(targetProfit - displayProfit)
+           + Math.abs(targetRevenue - displayRevenue)
+           + Math.abs(targetExpenses - displayExpenses);
+  if (dx > 0.5) {
+    rafId = requestAnimationFrame(animateHeader);
+  } else {
+    displayProfit = targetProfit;
+    displayRevenue = targetRevenue;
+    displayExpenses = targetExpenses;
+    paintHeader();
+  }
+}
+
+function paintHeader() {
+  if (currentUnit === 'usd') {
+    profitEl.textContent   = formatUsd(displayProfit);
+    revenueEl.textContent  = formatUsd(displayRevenue);
+    expensesEl.textContent = formatUsd(displayExpenses);
+  } else {
+    const sp = solPrice();
+    profitEl.textContent   = formatSol(displayProfit   / sp);
+    revenueEl.textContent  = formatSol(displayRevenue  / sp);
+    expensesEl.textContent = formatSol(displayExpenses / sp);
+  }
+
+  profitEl.className   = 'stat-value ' + (displayProfit >= 0 ? 'positive' : 'negative');
+  revenueEl.className  = 'stat-value positive';
+  expensesEl.className = 'stat-value negative'; // expenses are a cost — red is standard
+}
+
+function setHeaderInstant(profit, revenue, expenses) {
+  targetProfit = profit; targetRevenue = revenue; targetExpenses = expenses;
+  displayProfit = profit; displayRevenue = revenue; displayExpenses = expenses;
+  paintHeader();
+}
+
+// ── Scroll handler (rAF-gated to avoid forced layout on the scroll thread) ───
+let scrollTicking = false;
+let anchorIdx = null;
+
+function setAnchor(idx) {
+  if (idx === anchorIdx) return;
+  if (anchorIdx !== null && allRows[anchorIdx]) {
+    allRows[anchorIdx].classList.remove('row-anchor');
+  }
+  anchorIdx = idx;
+  if (idx !== null && allRows[idx]) {
+    allRows[idx].classList.add('row-anchor');
+  }
+}
+
+window.addEventListener('scroll', () => {
+  if (scrollTicking) return;
+  scrollTicking = true;
+  requestAnimationFrame(() => {
+    scrollTicking = false;
+    const idx = findBottomRow();
+    if (idx === null) return;
+    setAnchor(idx);
+    const row = allRows[idx];
+    updateHeaderDisplay(
+      parseFloat(row.dataset.profit),
+      parseFloat(row.dataset.revenue),
+      parseFloat(row.dataset.expenses),
+      false
+    );
+  });
+}, { passive: true });
+
+// ── Init ────────────────────────────────────────────────────────────────────
+render('all', { scrollToBottom: true });
+window.scrollTo(0, document.body.scrollHeight);
+</script>
+</body>
+</html>

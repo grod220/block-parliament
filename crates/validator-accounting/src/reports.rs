@@ -10,6 +10,7 @@ use crate::config::Config;
 use crate::constants;
 use crate::doublezero::DoubleZeroFee;
 use crate::expenses::{Expense, ExpenseCategory};
+use crate::html_report;
 use crate::jito::MevClaim;
 use crate::leader_fees::EpochLeaderFees;
 use crate::prices::{PriceCache, get_price};
@@ -52,6 +53,7 @@ pub fn generate_all_reports(output_dir: &Path, data: &ReportData, year_filter: O
     generate_treasury_ledger(output_dir, data.categorized, data.prices)?;
     generate_summary(output_dir, data, year_filter)?;
     generate_glossary(output_dir)?;
+    html_report::generate_html_report(output_dir, data)?;
 
     // Older versions generated a separate glossary/data-dictionary CSV. Remove it to
     // avoid accidentally sharing stale context alongside the ledgers.
