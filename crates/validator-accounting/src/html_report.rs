@@ -11,6 +11,7 @@ use std::path::Path;
 use crate::constants;
 use crate::prices::get_price;
 use crate::reports::ReportData;
+use crate::tax_report::{self, TaxReportData, TaxRow};
 
 /// One atomic financial event in the timeline.
 #[derive(Debug, Clone, Serialize)]
@@ -320,26 +321,172 @@ pub fn build_timeline(data: &ReportData) -> Vec<TimelineEvent> {
     events
 }
 
+fn parse_epoch_from_description(description: &str) -> Option<u64> {
+    let marker = "epoch ";
+    let lower = description.to_lowercase();
+    let idx = lower.find(marker)?;
+    let digits = lower[idx + marker.len()..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>();
+    digits.parse::<u64>().ok()
+}
+
+fn tax_event_type(row: &TaxRow) -> &'static str {
+    match row.entry_type.as_str() {
+        "Revenue" => "tax_revenue",
+        "Reimbursement" => "tax_reimbursement",
+        "Return of Capital" => "tax_return_capital",
+        "Expense" => {
+            let category = row.category.to_lowercase();
+            match category.as_str() {
+                "vote fees" => "tax_expense_vote_fees",
+                "doublezero" => "tax_expense_doublezero",
+                "hosting" => "tax_expense_hosting",
+                "software" => "tax_expense_software",
+                "contractor" => "tax_expense_contractor",
+                "hardware" => "tax_expense_hardware",
+                _ => "tax_expense_other",
+            }
+        }
+        _ => "tax_other",
+    }
+}
+
+fn tax_label_and_sublabel(row: &TaxRow, event_type: &str) -> (String, Option<String>) {
+    if event_type == "tax_revenue" {
+        return ("Taxable withdrawal".to_string(), Some(row.description.clone()));
+    }
+    if event_type == "tax_reimbursement" {
+        return ("SFDP reimbursement".to_string(), Some(row.description.clone()));
+    }
+    if event_type == "tax_return_capital" {
+        return ("Return of capital".to_string(), Some(row.description.clone()));
+    }
+    if event_type == "tax_expense_vote_fees" {
+        return ("Vote fees".to_string(), Some(row.description.clone()));
+    }
+    if event_type == "tax_expense_doublezero" {
+        return ("DoubleZero fees".to_string(), Some(row.description.clone()));
+    }
+
+    if row.entry_type == "Expense" {
+        let parts: Vec<&str> = row.description.splitn(2, " - ").collect();
+        if parts.len() == 2 {
+            return (
+                format!("{} — {}", parts[0].trim(), row.category),
+                Some(parts[1].trim().to_string()),
+            );
+        }
+        return (format!("{} expense", row.category), Some(row.description.clone()));
+    }
+
+    (row.category.clone(), Some(row.description.clone()))
+}
+
+fn signed_tax_amounts(row: &TaxRow, event_type: &str) -> (f64, f64, bool) {
+    let sol = row.sol_amount.unwrap_or(0.0);
+    let usd = row.usd_value;
+
+    match event_type {
+        "tax_revenue" => (sol, usd, true),
+        "tax_reimbursement" => (sol, usd, true),
+        "tax_return_capital" => (sol, usd, false),
+        "tax_expense_vote_fees"
+        | "tax_expense_doublezero"
+        | "tax_expense_hosting"
+        | "tax_expense_software"
+        | "tax_expense_contractor"
+        | "tax_expense_hardware"
+        | "tax_expense_other" => (-sol, -usd, true),
+        _ => (0.0, 0.0, false),
+    }
+}
+
+pub fn build_tax_timeline(data: &ReportData) -> Vec<TimelineEvent> {
+    let tax_data = TaxReportData {
+        config: data.config,
+        categorized: data.categorized,
+        doublezero_fees: data.doublezero_fees,
+        vote_costs: data.vote_costs,
+        expenses: data.expenses,
+        prices: data.prices,
+    };
+    let (rows, _skipped_unknown_dates) = tax_report::build_tax_rows(&tax_data, None);
+
+    let mut events = Vec::new();
+    for row in rows {
+        let event_type = tax_event_type(&row);
+        let (label, sublabel) = tax_label_and_sublabel(&row, event_type);
+        let (amount_sol, amount_usd, is_pnl) = signed_tax_amounts(&row, event_type);
+
+        events.push(TimelineEvent {
+            date: row.date,
+            epoch: parse_epoch_from_description(&row.description),
+            event_type,
+            label,
+            sublabel,
+            amount_sol,
+            amount_usd,
+            cumulative_profit_usd: 0.0,
+            cumulative_revenue_usd: 0.0,
+            cumulative_expenses_usd: 0.0,
+            is_pnl,
+        });
+    }
+
+    events.sort_by(|a, b| {
+        sort_date(&a.date)
+            .cmp(sort_date(&b.date))
+            .then_with(|| type_order(a.event_type).cmp(&type_order(b.event_type)))
+    });
+
+    let mut cum_profit = 0.0_f64;
+    let mut cum_revenue = 0.0_f64;
+    let mut cum_expenses = 0.0_f64;
+
+    for ev in &mut events {
+        if ev.is_pnl {
+            if ev.amount_usd >= 0.0 {
+                cum_revenue += ev.amount_usd;
+            } else {
+                cum_expenses += ev.amount_usd.abs();
+            }
+            cum_profit += ev.amount_usd;
+        }
+        ev.cumulative_profit_usd = cum_profit;
+        ev.cumulative_revenue_usd = cum_revenue;
+        ev.cumulative_expenses_usd = cum_expenses;
+    }
+
+    events
+}
+
 /// Write a self-contained `report.html` to `output_dir`.
 pub fn generate_html_report(output_dir: &Path, data: &ReportData) -> Result<()> {
     let timeline = build_timeline(data);
+    let tax_timeline = build_tax_timeline(data);
     let timeline_json = serde_json::to_string(&timeline)?;
+    let tax_timeline_json = serde_json::to_string(&tax_timeline)?;
 
     // Prevent "</script>" in string values (vendor names, descriptions, labels)
     // from closing the inline <script> block prematurely.
     // Escaping the forward slash (\/) is valid JSON and parsed transparently.
     let timeline_json = timeline_json.replace("</", r"<\/");
+    let tax_timeline_json = tax_timeline_json.replace("</", r"<\/");
 
-    let html = build_html(&timeline_json);
+    let html = build_html(&timeline_json, &tax_timeline_json);
     let path = output_dir.join("report.html");
     std::fs::write(&path, html)?;
     println!("  Generated: {}", path.display());
     Ok(())
 }
 
-fn build_html(timeline_json: &str) -> String {
+fn build_html(timeline_json: &str, tax_timeline_json: &str) -> String {
     // The HTML template is a raw string literal embedded at compile time.
     // The JSON data is injected at a single marker so the template stays readable.
     let template = include_str!("html_report_template.html");
-    template.replacen("__TIMELINE_JSON__", timeline_json, 1)
+    template
+        .replacen("__TIMELINE_JSON__", timeline_json, 1)
+        .replacen("__TAX_TIMELINE_JSON__", tax_timeline_json, 1)
 }

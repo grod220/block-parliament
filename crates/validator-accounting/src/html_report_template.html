@@ -25,7 +25,33 @@
       --green: #227a4b;
       --red: #b91c1c;
       --neutral: #888;
-      --header-h: 72px;
+      --header-offset: 0px;
+      --timeline-commission: #2563eb;
+      --timeline-leader: #0ea5e9;
+      --timeline-mev: #6366f1;
+      --timeline-bam: #0891b2;
+      --timeline-vote: #b45309;
+      --timeline-doublezero: #c2410c;
+      --timeline-expense: #b45309;
+      --timeline-expense-hosting: #ea580c;
+      --timeline-expense-software: #d97706;
+      --timeline-expense-contractor: #c2410c;
+      --timeline-expense-hardware: #9a3412;
+      --timeline-expense-other: #b45309;
+      --timeline-seeding: #64748b;
+      --timeline-withdrawal: #475569;
+      --timeline-dz-payment: #52525b;
+      --timeline-tax-revenue: #2563eb;
+      --timeline-tax-reimbursement: #0891b2;
+      --timeline-tax-return-capital: #64748b;
+      --timeline-tax-expense-vote-fees: #b45309;
+      --timeline-tax-expense-doublezero: #c2410c;
+      --timeline-tax-expense-hosting: #ea580c;
+      --timeline-tax-expense-software: #d97706;
+      --timeline-tax-expense-contractor: #9a3412;
+      --timeline-tax-expense-hardware: #92400e;
+      --timeline-tax-expense-other: #b45309;
+      --timeline-other: #6b7280;
     }
 
     @media (prefers-color-scheme: dark) {
@@ -38,6 +64,32 @@
         --green: #34d399;
         --red: #f87171;
         --neutral: #777;
+        --timeline-commission: #60a5fa;
+        --timeline-leader: #38bdf8;
+        --timeline-mev: #818cf8;
+        --timeline-bam: #22d3ee;
+        --timeline-vote: #f59e0b;
+        --timeline-doublezero: #fb923c;
+        --timeline-expense: #f59e0b;
+        --timeline-expense-hosting: #fb923c;
+        --timeline-expense-software: #fbbf24;
+        --timeline-expense-contractor: #fdba74;
+        --timeline-expense-hardware: #f97316;
+        --timeline-expense-other: #f59e0b;
+        --timeline-seeding: #94a3b8;
+        --timeline-withdrawal: #cbd5e1;
+        --timeline-dz-payment: #a1a1aa;
+        --timeline-tax-revenue: #60a5fa;
+        --timeline-tax-reimbursement: #22d3ee;
+        --timeline-tax-return-capital: #94a3b8;
+        --timeline-tax-expense-vote-fees: #f59e0b;
+        --timeline-tax-expense-doublezero: #fb923c;
+        --timeline-tax-expense-hosting: #fdba74;
+        --timeline-tax-expense-software: #fbbf24;
+        --timeline-tax-expense-contractor: #fed7aa;
+        --timeline-tax-expense-hardware: #f97316;
+        --timeline-tax-expense-other: #f59e0b;
+        --timeline-other: #9ca3af;
       }
     }
 
@@ -89,7 +141,6 @@
       background-color: var(--paper);
       border-bottom: 1px dashed var(--rule);
       padding: 12px 20px 10px;
-      min-height: var(--header-h);
     }
 
     @supports (backdrop-filter: blur(1px)) {
@@ -107,6 +158,12 @@
       margin-bottom: 10px;
     }
 
+    .header-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
     .header-title {
       font-size: 12px;
       font-weight: bold;
@@ -120,7 +177,13 @@
       gap: 4px;
     }
 
-    .unit-btn {
+    .mode-toggle {
+      display: flex;
+      gap: 4px;
+    }
+
+    .unit-btn,
+    .mode-btn {
       background: none;
       border: 1px dashed var(--rule);
       color: var(--ink-light);
@@ -131,12 +194,14 @@
       transition: all 0.15s;
     }
 
-    .unit-btn:hover {
+    .unit-btn:hover,
+    .mode-btn:hover {
       border-color: var(--ink);
       color: var(--ink);
     }
 
-    .unit-btn.active {
+    .unit-btn.active,
+    .mode-btn.active {
       background: var(--ink);
       border-color: var(--ink);
       border-style: solid;
@@ -170,6 +235,9 @@
       letter-spacing: -0.02em;
       transition: color 0.2s;
       margin-top: 4px;
+      line-height: 1.1;
+      min-height: 1.2em;
+      display: block;
     }
 
     .stat-value.positive {
@@ -184,13 +252,38 @@
       color: var(--ink);
     }
 
-    .period-tabs {
+    .header-filters {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+    }
+
+    .date-range-tabs {
       display: flex;
       gap: 4px;
       flex-wrap: wrap;
+      min-width: 0;
+      flex: 1;
     }
 
-    .period-btn {
+    .type-filters {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 6px;
+      min-width: 260px;
+    }
+
+    .type-group-tabs,
+    .type-sub-tabs {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .filter-btn {
       background: none;
       border: 1px dashed var(--rule);
       color: var(--ink-light);
@@ -201,12 +294,12 @@
       transition: all 0.15s;
     }
 
-    .period-btn:hover {
+    .filter-btn:hover {
       border-color: var(--ink);
       color: var(--ink);
     }
 
-    .period-btn.active {
+    .filter-btn.active {
       background: var(--ink);
       border-color: var(--ink);
       border-style: solid;
@@ -222,23 +315,57 @@
       grid-template-columns: minmax(460px, 1.05fr) minmax(560px, 1.35fr);
       gap: clamp(16px, 2vw, 28px);
       align-items: start;
+      transition: opacity 180ms ease, transform 180ms ease;
+    }
+
+    #content-layout.ui-updating {
+      opacity: 0.86;
+      transform: translateY(2px);
     }
 
     /* ── Timeline ── */
     #timeline {
       max-width: none;
       margin: 0;
-      padding: 0 0 80px;
+      padding: 0 0 8px;
       min-width: 0;
-      overflow: hidden;
+      overflow: visible;
+    }
+
+    #timeline-panel {
+      min-width: 0;
+      max-height: calc(100vh - var(--header-offset) - 34px);
+      overflow-y: auto;
+      overflow-x: hidden;
+      overscroll-behavior: contain;
+      scroll-padding-top: 10px;
+      scrollbar-gutter: stable;
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+    }
+
+    #timeline-panel::-webkit-scrollbar {
+      width: 0;
+      height: 0;
+      display: none;
     }
 
     .month-sep {
       display: flex;
       align-items: center;
       gap: 12px;
-      margin: 28px 0 6px;
-      padding-top: 4px;
+      margin: 16px 0 6px;
+      padding: 6px 8px;
+      position: sticky;
+      top: 0;
+      z-index: 4;
+      background: var(--paper);
+      border-bottom: 1px dashed var(--rule);
+      animation: row-enter 160ms ease both;
+    }
+
+    .month-sep:first-child {
+      margin-top: 0;
     }
 
     .month-sep-line {
@@ -270,14 +397,19 @@
       color: var(--red);
     }
 
+    .month-sep-net.neutral {
+      color: var(--neutral);
+    }
+
     /* ── Event rows ── */
     .event-row {
       display: grid;
-      grid-template-columns: 88px 20px 1fr auto auto;
+      grid-template-columns: 62px 1fr auto auto;
       align-items: start;
       gap: 0 10px;
       padding: 5px 8px;
       transition: background 0.1s;
+      animation: row-enter 160ms ease both;
     }
 
     .event-row:hover {
@@ -290,106 +422,149 @@
     }
 
     .ev-date {
-      font-size: 12px;
+      font-size: 11px;
       color: var(--ink-light);
       font-variant-numeric: tabular-nums;
       padding-top: 1px;
     }
 
     .ev-dot {
-      text-align: center;
-      font-size: 10px;
-      padding-top: 3px;
-    }
-
-    /* Per-category dot colors */
-    .ev-dot[data-type="commission"] {
-      color: #b45309;
-    }
-
-    .ev-dot[data-type="leader_fees"] {
-      color: #2563eb;
-    }
-
-    .ev-dot[data-type="mev"] {
-      color: #7c3aed;
-    }
-
-    .ev-dot[data-type="bam"] {
-      color: #0891b2;
-    }
-
-    .ev-dot[data-type="vote_cost"] {
-      color: #c2410c;
-    }
-
-    .ev-dot[data-type="doublezero"] {
-      color: #be123c;
-    }
-
-    .ev-dot[data-type="expense"] {
-      color: var(--red);
-    }
-
-    .ev-dot[data-type="seeding"] {
-      color: var(--green);
-    }
-
-    .ev-dot[data-type="withdrawal"] {
-      color: var(--neutral);
-    }
-
-    .ev-dot[data-type="doublezero_payment"] {
-      color: #4f46e5;
-    }
-
-    @media (prefers-color-scheme: dark) {
-      .ev-dot[data-type="commission"] {
-        color: #f59e0b;
-      }
-
-      .ev-dot[data-type="leader_fees"] {
-        color: #60a5fa;
-      }
-
-      .ev-dot[data-type="mev"] {
-        color: #a78bfa;
-      }
-
-      .ev-dot[data-type="bam"] {
-        color: #22d3ee;
-      }
-
-      .ev-dot[data-type="vote_cost"] {
-        color: #fb923c;
-      }
-
-      .ev-dot[data-type="doublezero"] {
-        color: #f43f5e;
-      }
-
-      .ev-dot[data-type="seeding"] {
-        color: #34d399;
-      }
-
-      .ev-dot[data-type="withdrawal"] {
-        color: #94a3b8;
-      }
-
-      .ev-dot[data-type="doublezero_payment"] {
-        color: #818cf8;
-      }
+      display: none;
     }
 
     .ev-label {
       min-width: 0;
     }
 
+    .ev-label-main-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
     .ev-label-main {
       font-size: 13px;
+      flex: 1;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+
+    .type-badge {
+      --badge-color: var(--type-accent, var(--timeline-other));
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 6px;
+      height: 16px;
+      border: 1px solid color-mix(in srgb, var(--badge-color) 65%, var(--rule));
+      border-radius: 999px;
+      font-size: 9px;
+      line-height: 1;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+      flex: 0 0 auto;
+      color: var(--badge-color);
+      background: color-mix(in srgb, var(--badge-color) 14%, var(--paper));
+    }
+
+    .type-badge.tone-income {
+      opacity: 1;
+    }
+
+    .type-badge.tone-expense {
+      opacity: 1;
+    }
+
+    .type-badge.tone-neutral {
+      opacity: 0.84;
+    }
+
+    .type-badge.tone-review {
+      text-decoration: underline dotted;
+      text-underline-offset: 2px;
+    }
+
+    .type-badge[data-type="commission"] {
+      --type-accent: var(--timeline-commission);
+    }
+
+    .type-badge[data-type="leader_fees"] {
+      --type-accent: var(--timeline-leader);
+    }
+
+    .type-badge[data-type="mev"] {
+      --type-accent: var(--timeline-mev);
+    }
+
+    .type-badge[data-type="bam"] {
+      --type-accent: var(--timeline-bam);
+    }
+
+    .type-badge[data-type="vote_cost"] {
+      --type-accent: var(--timeline-vote);
+    }
+
+    .type-badge[data-type="doublezero"] {
+      --type-accent: var(--timeline-doublezero);
+    }
+
+    .type-badge[data-type="expense"] {
+      --type-accent: var(--timeline-expense);
+    }
+
+    .type-badge[data-type="tax_revenue"] {
+      --type-accent: var(--timeline-tax-revenue);
+    }
+
+    .type-badge[data-type="tax_reimbursement"] {
+      --type-accent: var(--timeline-tax-reimbursement);
+    }
+
+    .type-badge[data-type="tax_return_capital"] {
+      --type-accent: var(--timeline-tax-return-capital);
+    }
+
+    .type-badge[data-type="tax_expense_vote_fees"] {
+      --type-accent: var(--timeline-tax-expense-vote-fees);
+    }
+
+    .type-badge[data-type="tax_expense_doublezero"] {
+      --type-accent: var(--timeline-tax-expense-doublezero);
+    }
+
+    .type-badge[data-type="tax_expense_hosting"] {
+      --type-accent: var(--timeline-tax-expense-hosting);
+    }
+
+    .type-badge[data-type="tax_expense_software"] {
+      --type-accent: var(--timeline-tax-expense-software);
+    }
+
+    .type-badge[data-type="tax_expense_contractor"] {
+      --type-accent: var(--timeline-tax-expense-contractor);
+    }
+
+    .type-badge[data-type="tax_expense_hardware"] {
+      --type-accent: var(--timeline-tax-expense-hardware);
+    }
+
+    .type-badge[data-type="tax_expense_other"] {
+      --type-accent: var(--timeline-tax-expense-other);
+    }
+
+    .type-badge[data-type="seeding"] {
+      --type-accent: var(--timeline-seeding);
+    }
+
+    .type-badge[data-type="withdrawal"] {
+      --type-accent: var(--timeline-withdrawal);
+    }
+
+    .type-badge[data-type="doublezero_payment"] {
+      --type-accent: var(--timeline-dz-payment);
     }
 
     .ev-label-sub {
@@ -438,7 +613,7 @@
       margin: 0;
       padding: 0;
       position: sticky;
-      top: calc(var(--header-h) + 14px);
+      top: calc(var(--header-offset) + 14px);
     }
 
     .dashboard-grid {
@@ -505,15 +680,32 @@
       .dashboard-card-main {
         grid-column: 1 / -1;
       }
+
     }
 
     @media (max-width: 700px) {
-      :root {
-        --header-h: 104px;
-      }
-
       #header {
         padding: 10px 12px 8px;
+      }
+
+      .header-controls {
+        gap: 6px;
+      }
+
+      .header-filters {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+      }
+
+      .type-filters {
+        align-items: flex-start;
+        min-width: 0;
+      }
+
+      .type-group-tabs,
+      .type-sub-tabs {
+        justify-content: flex-start;
       }
 
       #content-layout {
@@ -556,7 +748,20 @@
       }
 
       #timeline {
-        padding: 0 0 72px;
+        padding: 0 0 8px;
+      }
+
+    }
+
+    @keyframes row-enter {
+      from {
+        opacity: 0;
+        transform: translateY(4px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
       }
     }
 
@@ -579,14 +784,30 @@
   <div id="header">
     <div class="header-top">
       <span class="header-title">&#x2500;&#x2524; Block Parliament · Validator Financials &#x251C;&#x2500;</span>
-      <div class="unit-toggle">
-        <button class="unit-btn active" id="btn-usd" onclick="setUnit('usd')">USD</button>
-        <button class="unit-btn" id="btn-sol" onclick="setUnit('sol')">SOL</button>
+      <div class="header-controls">
+        <div class="mode-toggle">
+          <button class="mode-btn active" id="btn-mode-operating" onclick="setViewMode('operating')">Operating</button>
+          <button class="mode-btn" id="btn-mode-tax" onclick="setViewMode('tax')">Tax</button>
+        </div>
+        <div class="unit-toggle">
+          <button class="unit-btn active" id="btn-usd" onclick="setUnit('usd')">USD</button>
+          <button class="unit-btn" id="btn-sol" onclick="setUnit('sol')">SOL</button>
+        </div>
       </div>
     </div>
 
-    <div class="period-tabs" id="period-tabs">
-      <!-- injected by JS -->
+    <div class="header-filters">
+      <div class="date-range-tabs" id="date-range-tabs">
+        <!-- injected by JS -->
+      </div>
+      <div class="type-filters">
+        <div class="type-group-tabs" id="type-group-tabs">
+          <!-- injected by JS -->
+        </div>
+        <div class="type-sub-tabs" id="type-sub-tabs">
+          <!-- injected by JS -->
+        </div>
+      </div>
     </div>
   </div>
 
@@ -594,15 +815,15 @@
     <div id="dashboard-container">
       <div class="stats-row">
         <div class="stat-card">
-          <div class="stat-label">Net P/L</div>
+          <div class="stat-label" id="label-profit">Net P/L</div>
           <div class="stat-value" id="stat-profit">$0</div>
         </div>
         <div class="stat-card">
-          <div class="stat-label">Revenue</div>
+          <div class="stat-label" id="label-revenue">Revenue</div>
           <div class="stat-value" id="stat-revenue">$0</div>
         </div>
         <div class="stat-card">
-          <div class="stat-label">Expenses</div>
+          <div class="stat-label" id="label-expenses">Expenses</div>
           <div class="stat-value" id="stat-expenses">$0</div>
         </div>
       </div>
@@ -610,34 +831,47 @@
       <div class="dashboard-grid">
         <!-- Main PnL Chart -->
         <div class="dashboard-card dashboard-card-main">
-          <div class="dashboard-card-title">&#x2500;&#x2524; Net Monthly Performance &#x251C;&#x2500;</div>
+          <div class="dashboard-card-title" id="title-monthly">&#x2500;&#x2524; Net Monthly Performance &#x251C;&#x2500;</div>
           <div class="dashboard-chart-tall"><canvas id="chart-pnl"></canvas></div>
         </div>
 
         <!-- Revenue Breakdown -->
         <div class="dashboard-card">
-          <div class="dashboard-card-title">&#x2500;&#x2524; Income Breakdown &#x251C;&#x2500;</div>
+          <div class="dashboard-card-title" id="title-income">&#x2500;&#x2524; Income Breakdown &#x251C;&#x2500;</div>
           <div class="dashboard-chart"><canvas id="chart-income"></canvas></div>
         </div>
 
         <!-- Expense Breakdown -->
         <div class="dashboard-card">
-          <div class="dashboard-card-title">&#x2500;&#x2524; Expense Breakdown &#x251C;&#x2500;</div>
+          <div class="dashboard-card-title" id="title-expense">&#x2500;&#x2524; Expense Breakdown &#x251C;&#x2500;</div>
           <div class="dashboard-chart"><canvas id="chart-expenses"></canvas></div>
         </div>
       </div>
     </div>
 
-    <div id="timeline"></div>
+    <div id="timeline-panel">
+      <div id="timeline"></div>
+    </div>
   </div>
 
   <script>
     const TIMELINE = __TIMELINE_JSON__;
+    const TAX_TIMELINE = __TAX_TIMELINE_JSON__;
 
     // ── Cached DOM refs ──────────────────────────────────────────────────────────
     const profitEl = document.getElementById('stat-profit');
     const revenueEl = document.getElementById('stat-revenue');
     const expensesEl = document.getElementById('stat-expenses');
+    const profitLabelEl = document.getElementById('label-profit');
+    const revenueLabelEl = document.getElementById('label-revenue');
+    const expensesLabelEl = document.getElementById('label-expenses');
+    const monthlyTitleEl = document.getElementById('title-monthly');
+    const incomeTitleEl = document.getElementById('title-income');
+    const expenseTitleEl = document.getElementById('title-expense');
+    const dateRangeTabsEl = document.getElementById('date-range-tabs');
+    const typeGroupTabsEl = document.getElementById('type-group-tabs');
+    const typeSubTabsEl = document.getElementById('type-sub-tabs');
+    const timelinePanelEl = document.getElementById('timeline-panel');
 
     // ── Detect dark mode for Chart.js theming ────────────────────────────────────
     const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -661,6 +895,8 @@
     Chart.defaults.plugins.tooltip.displayColors = true;
     Chart.defaults.plugins.tooltip.borderColor = chartRule;
     Chart.defaults.plugins.tooltip.borderWidth = 1;
+    Chart.defaults.animation.duration = 220;
+    Chart.defaults.animation.easing = 'easeOutCubic';
 
     const chartColors = {
       commission: isDark ? '#f59e0b' : '#b45309',
@@ -670,6 +906,16 @@
       vote_cost: isDark ? '#fb923c' : '#c2410c',
       expense: chartRed,
       doublezero: isDark ? '#f43f5e' : '#be123c',
+      tax_revenue: isDark ? '#60a5fa' : '#2563eb',
+      tax_reimbursement: isDark ? '#22d3ee' : '#0891b2',
+      tax_return_capital: isDark ? '#94a3b8' : '#64748b',
+      tax_expense_vote_fees: isDark ? '#f59e0b' : '#b45309',
+      tax_expense_doublezero: isDark ? '#fb923c' : '#c2410c',
+      tax_expense_hosting: isDark ? '#fdba74' : '#ea580c',
+      tax_expense_software: isDark ? '#fbbf24' : '#d97706',
+      tax_expense_contractor: isDark ? '#fed7aa' : '#9a3412',
+      tax_expense_hardware: isDark ? '#f97316' : '#92400e',
+      tax_expense_other: isDark ? '#f59e0b' : '#b45309',
       other: isDark ? '#52525b' : '#888'
     };
 
@@ -680,16 +926,120 @@
       bam: 'BAM',
       vote_cost: 'Vote Costs',
       expense: 'Expenses',
-      doublezero: 'DoubleZero Fees'
+      doublezero: 'DoubleZero Fees',
+      seeding: 'Capital Contribution',
+      withdrawal: 'Withdrawal',
+      doublezero_payment: 'DoubleZero Prepayment',
+      tax_revenue: 'Taxable Withdrawal',
+      tax_reimbursement: 'SFDP Reimbursement',
+      tax_return_capital: 'Return of Capital',
+      tax_expense_vote_fees: 'Vote Fees',
+      tax_expense_doublezero: 'DoubleZero',
+      tax_expense_hosting: 'Hosting',
+      tax_expense_software: 'Software',
+      tax_expense_contractor: 'Contractor',
+      tax_expense_hardware: 'Hardware',
+      tax_expense_other: 'Other Expense',
+    };
+
+    const dateRangeOptions = [
+      { id: 'all', label: 'All time' },
+      { id: 'last_epoch', label: 'Last epoch' },
+      { id: '30d', label: '30D' },
+      { id: '90d', label: '90D' },
+      { id: '2025', label: '2025' },
+      { id: '2026', label: '2026' },
+    ];
+
+    const operatingTypeGroupOptions = [
+      { id: 'all', label: 'All' },
+      { id: 'revenue', label: 'Revenue' },
+      { id: 'expenses', label: 'Expenses' },
+      { id: 'non_pnl', label: 'Non-P&L' },
+    ];
+
+    const taxTypeGroupOptions = [
+      { id: 'tax_events', label: 'Tax events' },
+      { id: 'all', label: 'All rows' },
+      { id: 'taxable_income', label: 'Taxable' },
+      { id: 'deductible_expense', label: 'Deductible' },
+      { id: 'reimbursement', label: 'Reimb.' },
+      { id: 'non_taxable_transfer', label: 'Transfers' },
+    ];
+
+    const operatingSubtypeMap = {
+      revenue: ['leader_fees', 'commission', 'mev', 'bam'],
+      expenses: ['vote_cost', 'doublezero', 'expense'],
+      non_pnl: ['seeding', 'withdrawal', 'doublezero_payment'],
+    };
+
+    const taxSubtypeMap = {
+      tax_events: [
+        'tax_revenue',
+        'tax_expense_vote_fees',
+        'tax_expense_doublezero',
+        'tax_expense_hosting',
+        'tax_expense_software',
+        'tax_expense_contractor',
+        'tax_expense_hardware',
+        'tax_expense_other',
+        'tax_reimbursement',
+      ],
+      taxable_income: ['tax_revenue'],
+      deductible_expense: [
+        'tax_expense_vote_fees',
+        'tax_expense_doublezero',
+        'tax_expense_hosting',
+        'tax_expense_software',
+        'tax_expense_contractor',
+        'tax_expense_hardware',
+        'tax_expense_other',
+      ],
+      reimbursement: ['tax_reimbursement'],
+      non_taxable_transfer: ['tax_return_capital'],
     };
 
     let pnlChartInstance = null;
     let incomeChartInstance = null;
     let expenseChartInstance = null;
     let currentRenderedEvents = TIMELINE;
+    let currentDateRange = 'all';
+    let currentTypeGroup = 'all';
+    let currentSubtype = 'all';
+    let currentViewMode = 'operating';
     const breakdownPalette = isDark
       ? ['#fb923c', '#f43f5e', '#ef4444', '#eab308', '#14b8a6', '#22c55e', '#60a5fa', '#a78bfa']
       : ['#c2410c', '#be123c', '#b91c1c', '#a16207', '#0d9488', '#15803d', '#2563eb', '#7c3aed'];
+    const expenseBreakdownPalette = isDark
+      ? ['#5ab0ff', '#c77dff', '#5edb6e', '#ffb84d', '#4dd0e1', '#ff4d88', '#f3e37c', '#8dd3c7', '#f4a261', '#adb5bd']
+      : ['#1e88e5', '#8e24aa', '#43a047', '#fb8c00', '#00acc1', '#d81b60', '#9c6f00', '#0f766e', '#c05621', '#546e7a'];
+    const expenseColorOverrides = {
+      'doublezero fees': isDark ? '#ff4d88' : '#d81b60',
+      'contractor contractor': isDark ? '#5ab0ff' : '#1e88e5',
+      'software notion': isDark ? '#5edb6e' : '#43a047',
+      'hosting edgevana': isDark ? '#ffb84d' : '#fb8c00',
+      'hosting latitude': isDark ? '#c77dff' : '#8e24aa',
+      'hosting google cloud': isDark ? '#4dd0e1' : '#00acc1',
+      'vote costs': isDark ? '#9aa5b1' : '#546e7a',
+      'other': isDark ? '#adb5bd' : '#6b7280',
+    };
+    let uiUpdateTimer = null;
+
+    function withUiTransition(work) {
+      if (document.startViewTransition) {
+        document.startViewTransition(work);
+        return;
+      }
+
+      const layout = document.getElementById('content-layout');
+      layout.classList.add('ui-updating');
+      work();
+
+      if (uiUpdateTimer) clearTimeout(uiUpdateTimer);
+      uiUpdateTimer = setTimeout(() => {
+        layout.classList.remove('ui-updating');
+      }, 220);
+    }
 
     function currentSolPrice() {
       const sp = solPrice();
@@ -711,6 +1061,249 @@
 
     function formatEventValueForUnit(usd, sol, unit) {
       return unit === 'usd' ? formatUsd(usd) : formatSol(eventSolValue(usd, sol));
+    }
+
+    function parseIsoDate(dateStr) {
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
+      if (!m) return null;
+      const year = parseInt(m[1], 10);
+      const month = parseInt(m[2], 10);
+      const day = parseInt(m[3], 10);
+      if (year < 1000 || month < 1 || month > 12 || day < 1 || day > 31) return null;
+      return new Date(Date.UTC(year, month - 1, day));
+    }
+
+    function activeTimeline() {
+      return currentViewMode === 'tax' ? TAX_TIMELINE : TIMELINE;
+    }
+
+    function latestTimelineDate(events) {
+      let latest = null;
+      for (const ev of events) {
+        const d = parseIsoDate(ev.date);
+        if (d && (!latest || d > latest)) latest = d;
+      }
+      if (latest) return latest;
+      const now = new Date();
+      return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    }
+
+    function latestEpochForEvents(events) {
+      return events.reduce((max, ev) => (
+        Number.isFinite(ev.epoch) && ev.epoch > max ? ev.epoch : max
+      ), -1);
+    }
+
+    function getTypeGroupOptions() {
+      return currentViewMode === 'tax' ? taxTypeGroupOptions : operatingTypeGroupOptions;
+    }
+
+    function getSubtypeMap() {
+      return currentViewMode === 'tax' ? taxSubtypeMap : operatingSubtypeMap;
+    }
+
+    function taxClassForEvent(ev) {
+      const expenseTypes = [
+        'tax_expense_vote_fees',
+        'tax_expense_doublezero',
+        'tax_expense_hosting',
+        'tax_expense_software',
+        'tax_expense_contractor',
+        'tax_expense_hardware',
+        'tax_expense_other',
+      ];
+      if (ev.event_type === 'tax_revenue') return 'taxable_income';
+      if (expenseTypes.includes(ev.event_type)) return 'deductible_expense';
+      if (ev.event_type === 'tax_reimbursement') return 'reimbursement';
+      if (ev.event_type === 'tax_return_capital') return 'non_taxable_transfer';
+      return 'needs_review';
+    }
+
+    function taxClassLabel(ev) {
+      const cls = taxClassForEvent(ev);
+      if (cls === 'taxable_income') return 'Taxable income';
+      if (cls === 'deductible_expense') return 'Deductible expense';
+      if (cls === 'reimbursement') return 'Reimbursement';
+      if (cls === 'non_taxable_transfer') return 'Non-taxable transfer';
+      return 'Needs review';
+    }
+
+    function typeBadgeLabel(ev) {
+      if (currentViewMode === 'tax') {
+        const map = {
+          tax_revenue: 'Taxable',
+          tax_reimbursement: 'Reimb.',
+          tax_return_capital: 'Capital',
+          tax_expense_vote_fees: 'Vote Fee',
+          tax_expense_doublezero: 'DZ Fee',
+          tax_expense_hosting: 'Hosting',
+          tax_expense_software: 'Software',
+          tax_expense_contractor: 'Contractor',
+          tax_expense_hardware: 'Hardware',
+          tax_expense_other: 'Expense',
+        };
+        return map[ev.event_type] || 'Review';
+      }
+
+      const map = {
+        commission: 'Commission',
+        leader_fees: 'Leader',
+        mev: 'MEV',
+        bam: 'BAM',
+        vote_cost: 'Vote Fee',
+        doublezero: 'DZ Fee',
+        expense: 'Expense',
+        seeding: 'Seeding',
+        withdrawal: 'Withdrawal',
+        doublezero_payment: 'DZ Payment',
+      };
+      if (ev.event_type === 'expense') {
+        const parts = String(ev.label || '').split('—').map(s => s.trim()).filter(Boolean);
+        if (parts.length >= 2) return parts[1];
+      }
+      return map[ev.event_type] || 'Event';
+    }
+
+    function typeBadgeTone(ev) {
+      if (currentViewMode === 'tax') {
+        const cls = taxClassForEvent(ev);
+        if (cls === 'taxable_income') return 'tone-income';
+        if (cls === 'deductible_expense') return 'tone-expense';
+        if (cls === 'needs_review') return 'tone-review';
+        return 'tone-neutral';
+      }
+
+      if (!ev.is_pnl) return 'tone-neutral';
+      if (ev.amount_usd > 0) return 'tone-income';
+      if (ev.amount_usd < 0) return 'tone-expense';
+      return 'tone-neutral';
+    }
+
+    function badgeAccentForEvent(ev) {
+      if (ev.event_type === 'expense') {
+        const parts = String(ev.label || '').split('—').map(s => s.trim().toLowerCase()).filter(Boolean);
+        const category = parts.length >= 2 ? parts[1] : '';
+        if (category.includes('hosting')) return 'var(--timeline-expense-hosting)';
+        if (category.includes('software')) return 'var(--timeline-expense-software)';
+        if (category.includes('contractor')) return 'var(--timeline-expense-contractor)';
+        if (category.includes('hardware')) return 'var(--timeline-expense-hardware)';
+        return 'var(--timeline-expense-other)';
+      }
+
+      if (ev.event_type.startsWith('tax_')) {
+        const taxAccentMap = {
+          tax_revenue: 'var(--timeline-tax-revenue)',
+          tax_reimbursement: 'var(--timeline-tax-reimbursement)',
+          tax_return_capital: 'var(--timeline-tax-return-capital)',
+          tax_expense_vote_fees: 'var(--timeline-tax-expense-vote-fees)',
+          tax_expense_doublezero: 'var(--timeline-tax-expense-doublezero)',
+          tax_expense_hosting: 'var(--timeline-tax-expense-hosting)',
+          tax_expense_software: 'var(--timeline-tax-expense-software)',
+          tax_expense_contractor: 'var(--timeline-tax-expense-contractor)',
+          tax_expense_hardware: 'var(--timeline-tax-expense-hardware)',
+          tax_expense_other: 'var(--timeline-tax-expense-other)',
+        };
+        return taxAccentMap[ev.event_type] || 'var(--timeline-other)';
+      }
+
+      const accentMap = {
+        commission: 'var(--timeline-commission)',
+        leader_fees: 'var(--timeline-leader)',
+        mev: 'var(--timeline-mev)',
+        bam: 'var(--timeline-bam)',
+        vote_cost: 'var(--timeline-vote)',
+        doublezero: 'var(--timeline-doublezero)',
+        seeding: 'var(--timeline-seeding)',
+        withdrawal: 'var(--timeline-withdrawal)',
+        doublezero_payment: 'var(--timeline-dz-payment)',
+      };
+      return accentMap[ev.event_type] || 'var(--timeline-other)';
+    }
+
+    function applyModeText() {
+      if (currentViewMode === 'tax') {
+        profitLabelEl.textContent = 'Net Tax Result';
+        revenueLabelEl.textContent = 'Taxable Income';
+        expensesLabelEl.textContent = 'Deductions';
+        monthlyTitleEl.textContent = '─┤ Monthly Taxable vs Deductible ├─';
+        incomeTitleEl.textContent = '─┤ Taxable Income Breakdown ├─';
+        expenseTitleEl.textContent = '─┤ Deduction Breakdown ├─';
+      } else {
+        profitLabelEl.textContent = 'Net P/L';
+        revenueLabelEl.textContent = 'Revenue';
+        expensesLabelEl.textContent = 'Expenses';
+        monthlyTitleEl.textContent = '─┤ Net Monthly Performance ├─';
+        incomeTitleEl.textContent = '─┤ Income Breakdown ├─';
+        expenseTitleEl.textContent = '─┤ Expense Breakdown ├─';
+      }
+    }
+
+    function setViewMode(mode) {
+      if (mode === currentViewMode) return;
+      currentViewMode = mode;
+      currentTypeGroup = mode === 'tax' ? 'tax_events' : 'all';
+      currentSubtype = 'all';
+      document.getElementById('btn-mode-operating').classList.toggle('active', mode === 'operating');
+      document.getElementById('btn-mode-tax').classList.toggle('active', mode === 'tax');
+      applyModeText();
+      render({ animate: true, scrollToBottom: true });
+    }
+
+    function dateRangeStart(rangeId, endDate) {
+      const end = new Date(endDate);
+      if (rangeId === '30d') {
+        const d = new Date(end);
+        d.setUTCDate(d.getUTCDate() - 29);
+        return d;
+      }
+      if (rangeId === '90d') {
+        const d = new Date(end);
+        d.setUTCDate(d.getUTCDate() - 89);
+        return d;
+      }
+      return null;
+    }
+
+    function eventGroup(ev) {
+      if (currentViewMode === 'tax') {
+        const cls = taxClassForEvent(ev);
+        if (cls === 'taxable_income' || cls === 'deductible_expense' || cls === 'reimbursement') return 'tax_events';
+        return cls;
+      }
+      if (!ev.is_pnl) return 'non_pnl';
+      if (ev.amount_usd > 0) return 'revenue';
+      if (ev.amount_usd < 0) return 'expenses';
+      if (operatingSubtypeMap.expenses.includes(ev.event_type)) return 'expenses';
+      if (operatingSubtypeMap.revenue.includes(ev.event_type)) return 'revenue';
+      return 'non_pnl';
+    }
+
+    function passesDateRange(ev) {
+      if (currentDateRange === 'all') return true;
+      const events = activeTimeline();
+      const endDate = latestTimelineDate(events);
+
+      if (currentDateRange === 'last_epoch') {
+        const latestEpoch = latestEpochForEvents(events);
+        if (latestEpoch < 0) return true;
+        return ev.epoch === latestEpoch;
+      }
+      if (currentDateRange === '2025' || currentDateRange === '2026') return ev.date.startsWith(currentDateRange);
+      const d = parseIsoDate(ev.date);
+      if (!d) return false;
+      const start = dateRangeStart(currentDateRange, endDate);
+      return !!start && d >= start && d <= endDate;
+    }
+
+    function passesTypeFilter(ev) {
+      const group = eventGroup(ev);
+      if (currentTypeGroup !== 'all' && group !== currentTypeGroup) return false;
+      if (currentSubtype !== 'all' && ev.event_type !== currentSubtype) return false;
+      return true;
+    }
+
+    function getFilteredEvents() {
+      return activeTimeline().filter(ev => passesDateRange(ev) && passesTypeFilter(ev));
     }
 
     function monthStartKey(dateStr) {
@@ -771,6 +1364,13 @@
       return Math.abs(h);
     }
 
+    function normalizeBreakdownKey(s) {
+      return String(s || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+    }
+
     function colorForBreakdownKey(key) {
       if (chartColors[key]) return chartColors[key];
       const lower = key.toLowerCase();
@@ -778,6 +1378,19 @@
       if (lower.includes('doublezero')) return chartColors.doublezero;
       if (lower.includes('expense')) return chartColors.expense;
       return breakdownPalette[hashString(key) % breakdownPalette.length];
+    }
+
+    function expenseColorForLabel(label) {
+      const normalized = normalizeBreakdownKey(label);
+      if (expenseColorOverrides[normalized]) return expenseColorOverrides[normalized];
+      if (normalized.includes('doublezero')) return expenseColorOverrides['doublezero fees'];
+      if (normalized.includes('contractor')) return expenseColorOverrides['contractor contractor'];
+      if (normalized.includes('notion')) return expenseColorOverrides['software notion'];
+      if (normalized.includes('edgevana')) return expenseColorOverrides['hosting edgevana'];
+      if (normalized.includes('latitude')) return expenseColorOverrides['hosting latitude'];
+      if (normalized.includes('google cloud')) return expenseColorOverrides['hosting google cloud'];
+      if (normalized.includes('vote')) return expenseColorOverrides['vote costs'];
+      return expenseBreakdownPalette[hashString(normalized) % expenseBreakdownPalette.length];
     }
 
     function expenseBreakdownKey(ev) {
@@ -797,7 +1410,7 @@
 
     function renderDashboard(events) {
       const dashEl = document.getElementById('dashboard-container');
-      if (!events || events.length < 5) {
+      if (!events || !events.length) {
         dashEl.style.display = 'none';
         return;
       }
@@ -978,7 +1591,7 @@
             labels: expRows.map(entry => entry[0]),
             datasets: [{
               data: expRows.map(entry => entry[1]),
-              backgroundColor: expRows.map(entry => colorForBreakdownKey(entry[0])),
+              backgroundColor: expRows.map(entry => expenseColorForLabel(entry[0])),
               borderWidth: 0,
               hoverOffset: 4
             }]
@@ -994,32 +1607,33 @@
 
     function setUnit(unit) {
       if (unit === currentUnit) return;
-      if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+      withUiTransition(() => {
+        if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
 
-      currentUnit = unit;
-      document.getElementById('btn-usd').classList.toggle('active', unit === 'usd');
-      document.getElementById('btn-sol').classList.toggle('active', unit === 'sol');
+        currentUnit = unit;
+        document.getElementById('btn-usd').classList.toggle('active', unit === 'usd');
+        document.getElementById('btn-sol').classList.toggle('active', unit === 'sol');
 
-      document.querySelectorAll('.ev-sol').forEach(el => {
-        const usd = parseFloat(el.dataset.usd || '0');
-        const sol = parseFloat(el.dataset.sol || '0');
-        el.textContent = formatSol(eventSolValue(usd, sol));
-        el.style.display = unit === 'sol' ? '' : 'none';
+        document.querySelectorAll('.ev-sol').forEach(el => {
+          const usd = parseFloat(el.dataset.usd || '0');
+          const sol = parseFloat(el.dataset.sol || '0');
+          el.textContent = formatSol(eventSolValue(usd, sol));
+          el.style.display = unit === 'sol' ? '' : 'none';
+        });
+        document.querySelectorAll('.ev-usd').forEach(el => {
+          const usd = parseFloat(el.dataset.usd || '0');
+          el.textContent = formatUsd(usd);
+        });
+
+        document.querySelectorAll('.month-sep-net').forEach(el => {
+          const netUsd = parseFloat(el.dataset.netUsd);
+          el.textContent = (unit === 'usd' ? formatUsd(netUsd) : formatSol(usdToSol(netUsd))) + ' net';
+          el.className = 'month-sep-net ' + valueSignClass(netUsd);
+        });
+
+        renderDashboard(currentRenderedEvents);
+        updateHeaderDisplay(targetProfit, targetRevenue, targetExpenses, true);
       });
-      document.querySelectorAll('.ev-usd').forEach(el => {
-        const usd = parseFloat(el.dataset.usd || '0');
-        const sol = parseFloat(el.dataset.sol || '0');
-        el.textContent = formatEventValueForUnit(usd, sol, unit);
-      });
-
-      document.querySelectorAll('.month-sep-net').forEach(el => {
-        const netUsd = parseFloat(el.dataset.netUsd);
-        el.textContent = (unit === 'usd' ? formatUsd(netUsd) : formatSol(usdToSol(netUsd))) + ' net';
-        el.className = 'month-sep-net ' + (netUsd >= 0 ? 'positive' : 'negative');
-      });
-
-      renderDashboard(currentRenderedEvents);
-      updateHeaderDisplay(targetProfit, targetRevenue, targetExpenses, true);
     }
 
     // ── Formatting helpers ──────────────────────────────────────────────────────
@@ -1043,6 +1657,45 @@
       return currentUnit === 'usd' ? formatUsd(usd) : formatSol(sol);
     }
 
+    function valueSignClass(v) {
+      if (v > 0) return 'positive';
+      if (v < 0) return 'negative';
+      return 'neutral';
+    }
+
+    function shortDateLabel(dateStr) {
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
+      if (!m) return dateStr;
+      return `${m[2]}-${m[3]}`;
+    }
+
+    function usingPanelScroll() {
+      if (!timelinePanelEl) return false;
+      const style = getComputedStyle(timelinePanelEl);
+      return style.overflowY !== 'visible' && style.overflowY !== 'clip';
+    }
+
+    function timelineAnchorViewportY() {
+      if (usingPanelScroll()) return timelinePanelEl.getBoundingClientRect().top + 8;
+      return (document.getElementById('header')?.getBoundingClientRect().bottom || 0) + 8;
+    }
+
+    function scrollToTimelineTop(smooth) {
+      if (usingPanelScroll()) {
+        timelinePanelEl.scrollTo({ top: 0, left: 0, behavior: smooth ? 'smooth' : 'auto' });
+      } else {
+        window.scrollTo({ top: 0, left: 0, behavior: smooth ? 'smooth' : 'auto' });
+      }
+    }
+
+    function scrollTimelineToBottom() {
+      if (usingPanelScroll()) {
+        timelinePanelEl.scrollTop = timelinePanelEl.scrollHeight;
+      } else {
+        window.scrollTo(0, document.body.scrollHeight);
+      }
+    }
+
     // ── Recent SOL price estimate ────────────────────────────────────────────────
     function solPrice() {
       const candidates = [];
@@ -1058,54 +1711,93 @@
       return candidates[Math.floor(candidates.length / 2)];
     }
 
-    // ── Build period tabs ───────────────────────────────────────────────────────
-    const years = [...new Set(TIMELINE.map(e => e.date.slice(0, 4)).filter(y => y !== '0000'))].sort().reverse();
-    const tabsEl = document.getElementById('period-tabs');
-
-    function buildTabs(activeYear) {
-      while (tabsEl.firstChild) tabsEl.removeChild(tabsEl.firstChild);
-
-      const allBtn = document.createElement('button');
-      allBtn.className = 'period-btn' + (activeYear === 'all' ? ' active' : '');
-      allBtn.textContent = 'All time';
-      allBtn.onclick = () => render('all');
-      tabsEl.appendChild(allBtn);
-
-      years.forEach(y => {
+    // ── Header filters ─────────────────────────────────────────────────────────
+    function buildDateRangeTabs() {
+      while (dateRangeTabsEl.firstChild) dateRangeTabsEl.removeChild(dateRangeTabsEl.firstChild);
+      for (const range of dateRangeOptions) {
         const btn = document.createElement('button');
-        btn.className = 'period-btn' + (activeYear === y ? ' active' : '');
-        btn.textContent = y;
-        btn.onclick = () => render(y);
-        tabsEl.appendChild(btn);
-      });
+        btn.className = 'filter-btn' + (currentDateRange === range.id ? ' active' : '');
+        btn.textContent = range.label;
+        btn.onclick = () => {
+          currentDateRange = range.id;
+          render({ animate: true, scrollToBottom: true });
+        };
+        dateRangeTabsEl.appendChild(btn);
+      }
+    }
+
+    function buildTypeFilters() {
+      while (typeGroupTabsEl.firstChild) typeGroupTabsEl.removeChild(typeGroupTabsEl.firstChild);
+      while (typeSubTabsEl.firstChild) typeSubTabsEl.removeChild(typeSubTabsEl.firstChild);
+
+      for (const group of getTypeGroupOptions()) {
+        const btn = document.createElement('button');
+        btn.className = 'filter-btn' + (currentTypeGroup === group.id ? ' active' : '');
+        btn.textContent = group.label;
+        btn.onclick = () => {
+          currentTypeGroup = group.id;
+          currentSubtype = 'all';
+          render({ animate: true, scrollToBottom: true });
+        };
+        typeGroupTabsEl.appendChild(btn);
+      }
+
+      if (currentTypeGroup === 'all') return;
+
+      const allSub = document.createElement('button');
+      allSub.className = 'filter-btn' + (currentSubtype === 'all' ? ' active' : '');
+      allSub.textContent = 'All';
+      allSub.onclick = () => {
+        currentSubtype = 'all';
+        render({ animate: true, scrollToBottom: true });
+      };
+      typeSubTabsEl.appendChild(allSub);
+
+      const subtypes = getSubtypeMap()[currentTypeGroup] || [];
+      for (const subtype of subtypes) {
+        const btn = document.createElement('button');
+        btn.className = 'filter-btn' + (currentSubtype === subtype ? ' active' : '');
+        btn.textContent = typeLabels[subtype] || subtype;
+        btn.onclick = () => {
+          currentSubtype = subtype;
+          render({ animate: true, scrollToBottom: true });
+        };
+        typeSubTabsEl.appendChild(btn);
+      }
     }
 
     // ── Render timeline ─────────────────────────────────────────────────────────
     let allRows = [];
 
-    function render(yearFilter, { scrollToBottom = false } = {}) {
-      const filteredEvents = yearFilter === 'all'
-        ? TIMELINE
-        : TIMELINE.filter(e => e.date.startsWith(yearFilter));
+    function render({ scrollToBottom = false, animate = false } = {}) {
+      if (animate) {
+        withUiTransition(() => render({ scrollToBottom, animate: false }));
+        return;
+      }
+
+      const filteredEvents = getFilteredEvents();
 
       currentRenderedEvents = filteredEvents;
+      applyModeText();
       renderDashboard(currentRenderedEvents);
-      buildTabs(yearFilter);
+      buildDateRangeTabs();
+      buildTypeFilters();
+      syncStickyOffsets();
 
-      if (!scrollToBottom) window.scrollTo(0, 0);
-
-      const events = yearFilter === 'all'
-        ? TIMELINE
-        : TIMELINE.filter(e => e.date.startsWith(yearFilter));
+      if (!scrollToBottom) {
+        scrollToTimelineTop(true);
+      }
+      const events = filteredEvents;
 
       const container = document.getElementById('timeline');
       while (container.firstChild) container.removeChild(container.firstChild);
+      anchorIdx = null;
       allRows = [];
 
       if (events.length === 0) {
         const msg = document.createElement('div');
         msg.style.cssText = 'text-align:center;color:var(--ink-light);padding:60px 0;font-size:14px';
-        msg.textContent = 'No events found for the selected period.';
+        msg.textContent = 'No events found for the selected filters.';
         container.appendChild(msg);
         setHeaderInstant(0, 0, 0);
         return;
@@ -1149,8 +1841,13 @@
       targetRevenue = seedR;
       targetExpenses = seedE;
 
-      anchorIdx = null;
-      setAnchor(allRows.length - 1);
+      if (scrollToBottom) {
+        anchorIdx = null;
+        scrollTimelineToBottom();
+        applyAnchorFromViewport(true);
+      } else {
+        applyAnchorFromViewport(true);
+      }
     }
 
     function monthLabel(mo) {
@@ -1176,7 +1873,7 @@
       lbl.textContent = monthLabel(mo);
 
       const netEl = document.createElement('span');
-      netEl.className = 'month-sep-net ' + (netUsd >= 0 ? 'positive' : 'negative');
+      netEl.className = 'month-sep-net ' + valueSignClass(netUsd);
       netEl.dataset.netUsd = netUsd;
       netEl.textContent = (currentUnit === 'usd' ? formatUsd(netUsd) : formatSol(usdToSol(netUsd))) + ' net';
 
@@ -1192,13 +1889,9 @@
 
     function rowClass(ev) {
       if (!ev.is_pnl) return 'ev-neutral';
-      return ev.amount_usd >= 0 ? 'ev-income' : 'ev-expense';
-    }
-
-    function dotGlyph(ev) {
-      if (!ev.is_pnl) return '○';
-      if (ev.amount_usd === 0) return '◌';
-      return '●';
+      if (ev.amount_usd > 0) return 'ev-income';
+      if (ev.amount_usd < 0) return 'ev-expense';
+      return 'ev-neutral';
     }
 
     function buildRow(ev) {
@@ -1210,23 +1903,30 @@
 
       const dateEl = document.createElement('span');
       dateEl.className = 'ev-date';
-      dateEl.textContent = ev.date;
-
-      const dotEl = document.createElement('span');
-      dotEl.className = 'ev-dot';
-      dotEl.dataset.type = ev.event_type;
-      dotEl.textContent = dotGlyph(ev);
+      dateEl.textContent = shortDateLabel(ev.date);
 
       const labelDiv = document.createElement('div');
       labelDiv.className = 'ev-label';
-      const mainEl = document.createElement('div');
+      const mainWrapEl = document.createElement('div');
+      mainWrapEl.className = 'ev-label-main-wrap';
+      const mainEl = document.createElement('span');
       mainEl.className = 'ev-label-main';
       mainEl.textContent = ev.label;
-      labelDiv.appendChild(mainEl);
-      if (ev.sublabel) {
+      const badgeEl = document.createElement('span');
+      badgeEl.className = 'type-badge ' + typeBadgeTone(ev);
+      badgeEl.dataset.type = ev.event_type;
+      badgeEl.style.setProperty('--type-accent', badgeAccentForEvent(ev));
+      badgeEl.textContent = typeBadgeLabel(ev);
+      mainWrapEl.appendChild(badgeEl);
+      mainWrapEl.appendChild(mainEl);
+      labelDiv.appendChild(mainWrapEl);
+      const subLabelText = currentViewMode === 'tax'
+        ? [taxClassLabel(ev), ev.sublabel].filter(Boolean).join(' · ')
+        : ev.sublabel;
+      if (subLabelText) {
         const subEl = document.createElement('div');
         subEl.className = 'ev-label-sub';
-        subEl.textContent = ev.sublabel;
+        subEl.textContent = subLabelText;
         labelDiv.appendChild(subEl);
       }
 
@@ -1241,10 +1941,9 @@
       usdEl.className = 'ev-usd';
       usdEl.dataset.sol = ev.amount_sol;
       usdEl.dataset.usd = ev.amount_usd;
-      usdEl.textContent = formatEventValueForUnit(ev.amount_usd, ev.amount_sol, currentUnit);
+      usdEl.textContent = formatUsd(ev.amount_usd);
 
       div.appendChild(dateEl);
-      div.appendChild(dotEl);
       div.appendChild(labelDiv);
       div.appendChild(solEl);
       div.appendChild(usdEl);
@@ -1260,16 +1959,108 @@
     let displayExpenses = 0;
     let rafId = null;
 
-    function findBottomRow() {
-      const viewBottom = window.innerHeight;
+    function syncStickyOffsets() {
+      const header = document.getElementById('header');
+      const headerH = header ? header.offsetHeight : 0;
+      document.documentElement.style.setProperty('--header-offset', `${headerH}px`);
+    }
+
+    function lastRowAtOrAbove(y) {
       let lo = 0, hi = allRows.length - 1, found = null;
       while (lo <= hi) {
         const mid = (lo + hi) >> 1;
-        const rect = allRows[mid].getBoundingClientRect();
-        if (rect.top < viewBottom) { found = mid; lo = mid + 1; }
-        else { hi = mid - 1; }
+        const top = allRows[mid].getBoundingClientRect().top;
+        if (top <= y) {
+          found = mid;
+          lo = mid + 1;
+        } else {
+          hi = mid - 1;
+        }
       }
       return found;
+    }
+
+    function firstVisibleRowInPanel() {
+      const panelTop = timelinePanelEl.getBoundingClientRect().top;
+      let lo = 0, hi = allRows.length - 1, found = null;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        const bottom = allRows[mid].getBoundingClientRect().bottom;
+        if (bottom >= panelTop + 1) {
+          found = mid;
+          hi = mid - 1;
+        } else {
+          lo = mid + 1;
+        }
+      }
+      return found;
+    }
+
+    function lastVisibleRowInPanel() {
+      const panelBottom = timelinePanelEl.getBoundingClientRect().bottom;
+      let lo = 0, hi = allRows.length - 1, found = null;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        const top = allRows[mid].getBoundingClientRect().top;
+        if (top <= panelBottom - 1) {
+          found = mid;
+          lo = mid + 1;
+        } else {
+          hi = mid - 1;
+        }
+      }
+      return found;
+    }
+
+    function findAnchorRow() {
+      if (!allRows.length) return null;
+
+      if (usingPanelScroll()) {
+        const panel = timelinePanelEl;
+        const panelRect = panel.getBoundingClientRect();
+        const panelTop = panelRect.top;
+        const maxTop = Math.max(0, panel.scrollHeight - panel.clientHeight);
+        const overflow = Math.max(0, maxTop - panel.scrollTop);
+
+        // If the panel cannot scroll, default to the latest row so header
+        // values reflect full-period totals for the current filter.
+        if (maxTop <= 1) return allRows.length - 1;
+
+        if (panel.scrollTop <= 1) return 0;
+        if (maxTop > 0 && panel.scrollTop >= maxTop - 1) return allRows.length - 1;
+
+        const baseY = panelTop + 8;
+        const tailRange = Math.max(120, panel.clientHeight - 40);
+        const tailProgress = overflow < tailRange ? (1 - (overflow / tailRange)) : 0;
+        const anchorY = baseY + tailProgress * Math.max(0, panel.clientHeight - 36);
+
+        let idx = lastRowAtOrAbove(anchorY);
+        if (idx === null) idx = 0;
+
+        const firstVisible = firstVisibleRowInPanel();
+        if (firstVisible !== null && idx < firstVisible) idx = firstVisible;
+        const lastVisible = lastVisibleRowInPanel();
+        if (lastVisible !== null && idx > lastVisible) idx = lastVisible;
+        return idx;
+      }
+
+      if (window.scrollY <= 1) return 0;
+      const anchorY = timelineAnchorViewportY();
+      const idx = lastRowAtOrAbove(anchorY);
+      return idx === null ? 0 : idx;
+    }
+
+    function applyAnchorFromViewport(instant) {
+      const idx = findAnchorRow();
+      if (idx === null) return;
+      setAnchor(idx);
+      const row = allRows[idx];
+      updateHeaderDisplay(
+        parseFloat(row.dataset.profit),
+        parseFloat(row.dataset.revenue),
+        parseFloat(row.dataset.expenses),
+        !!instant
+      );
     }
 
     function updateHeaderDisplay(profit, revenue, expenses, instant) {
@@ -1333,9 +2124,10 @@
     let anchorIdx = null;
 
     function setAnchor(idx) {
-      if (idx === anchorIdx) return;
-      if (anchorIdx !== null && allRows[anchorIdx]) {
-        allRows[anchorIdx].classList.remove('row-anchor');
+      const prevRow = anchorIdx !== null ? allRows[anchorIdx] : null;
+      if (idx === anchorIdx && prevRow && prevRow.classList.contains('row-anchor')) return;
+      if (prevRow) {
+        prevRow.classList.remove('row-anchor');
       }
       anchorIdx = idx;
       if (idx !== null && allRows[idx]) {
@@ -1343,27 +2135,37 @@
       }
     }
 
-    window.addEventListener('scroll', () => {
+    function scheduleAnchorUpdate() {
       if (scrollTicking) return;
       scrollTicking = true;
       requestAnimationFrame(() => {
         scrollTicking = false;
-        const idx = findBottomRow();
-        if (idx === null) return;
-        setAnchor(idx);
-        const row = allRows[idx];
-        updateHeaderDisplay(
-          parseFloat(row.dataset.profit),
-          parseFloat(row.dataset.revenue),
-          parseFloat(row.dataset.expenses),
-          false
-        );
+        applyAnchorFromViewport(false);
       });
+    }
+
+    window.addEventListener('scroll', scheduleAnchorUpdate, { passive: true });
+    if (timelinePanelEl) {
+      timelinePanelEl.addEventListener('scroll', scheduleAnchorUpdate, { passive: true });
+    }
+
+    let resizeDebounce = null;
+    window.addEventListener('resize', () => {
+      if (resizeDebounce) clearTimeout(resizeDebounce);
+      resizeDebounce = setTimeout(() => {
+        syncStickyOffsets();
+        renderDashboard(currentRenderedEvents);
+        applyAnchorFromViewport(true);
+      }, 120);
     }, { passive: true });
 
     // ── Init ────────────────────────────────────────────────────────────────────
-    render('all', { scrollToBottom: true });
-    window.scrollTo(0, document.body.scrollHeight);
+    syncStickyOffsets();
+    render({ scrollToBottom: true });
+    requestAnimationFrame(() => {
+      scrollTimelineToBottom();
+      applyAnchorFromViewport(true);
+    });
   </script>
 </body>
 

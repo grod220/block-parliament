@@ -13,17 +13,20 @@
 use anyhow::Result;
 use chrono::{Datelike, NaiveDate};
 use csv::Writer;
-use std::path::Path;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 use crate::config::Config;
 use crate::doublezero::DoubleZeroFee;
 use crate::expenses::Expense;
-use crate::prices::{PriceCache, get_price};
+use crate::prices::{get_price, PriceCache};
 use crate::transactions::{CategorizedTransfers, SolTransfer};
 use crate::vote_costs::EpochVoteCost;
 
 /// Tax report output filename
 const TAX_REPORT_FILENAME: &str = "tax_report.csv";
+const TAX_SCHEDULE_C_FILENAME: &str = "tax_schedule_c.csv";
+const TAX_SCHEDULE_C_OTHER_EXPENSES_FILENAME: &str = "tax_schedule_c_other_expenses.csv";
 
 /// All data needed to generate the tax report.
 pub struct TaxReportData<'a> {
@@ -36,20 +39,21 @@ pub struct TaxReportData<'a> {
 }
 
 /// A single row in the tax report CSV.
-struct TaxRow {
-    date: String,
-    entry_type: String, // "Revenue", "Expense", "Return of Capital", or "Reimbursement"
-    category: String,   // e.g. "Withdrawal", "Vote Fees", "DoubleZero", "Hosting"
-    description: String,
-    sol_amount: Option<f64>,
-    sol_price_usd: Option<f64>,
-    usd_value: f64,
-    destination: String,  // for withdrawals
-    tx_signature: String, // for on-chain events
+#[derive(Debug, Clone)]
+pub struct TaxRow {
+    pub date: String,
+    pub entry_type: String, // "Revenue", "Expense", "Return of Capital", or "Reimbursement"
+    pub category: String,   // e.g. "Withdrawal", "Vote Fees", "DoubleZero", "Hosting"
+    pub description: String,
+    pub sol_amount: Option<f64>,
+    pub sol_price_usd: Option<f64>,
+    pub usd_value: f64,
+    pub destination: String,  // for withdrawals
+    pub tx_signature: String, // for on-chain events
 }
 
-/// Generate the tax report CSV and print a console summary.
-pub fn generate_tax_report(output_dir: &Path, data: &TaxReportData, year_filter: Option<i32>) -> Result<()> {
+/// Build normalized tax rows used by CSV output and HTML tax timeline rendering.
+pub fn build_tax_rows(data: &TaxReportData, year_filter: Option<i32>) -> (Vec<TaxRow>, usize) {
     let mut rows = Vec::new();
     let mut skipped_unknown_dates: usize = 0;
 
@@ -98,6 +102,13 @@ pub fn generate_tax_report(output_dir: &Path, data: &TaxReportData, year_filter:
         a.date.cmp(&b.date).then_with(|| b.entry_type.cmp(&a.entry_type)) // "Revenue" > "Expense" → revenue first
     });
 
+    (rows, skipped_unknown_dates)
+}
+
+/// Generate the tax report CSV and print a console summary.
+pub fn generate_tax_report(output_dir: &Path, data: &TaxReportData, year_filter: Option<i32>) -> Result<()> {
+    let (rows, skipped_unknown_dates) = build_tax_rows(data, year_filter);
+
     // Write CSV
     let path = output_dir.join(TAX_REPORT_FILENAME);
     let mut wtr = Writer::from_path(&path)?;
@@ -130,6 +141,8 @@ pub fn generate_tax_report(output_dir: &Path, data: &TaxReportData, year_filter:
 
     wtr.flush()?;
 
+    let (schedule_c_path, schedule_c_other_expenses_path) = write_schedule_c_csv(output_dir, &rows, year_filter)?;
+
     // Console summary
     print_tax_summary(&rows, year_filter);
 
@@ -141,8 +154,248 @@ pub fn generate_tax_report(output_dir: &Path, data: &TaxReportData, year_filter:
     }
 
     println!("\nTax report written to: {}", path.display());
+    println!("Schedule C mapping written to: {}", schedule_c_path.display());
+    println!(
+        "Schedule C other expenses detail written to: {}",
+        schedule_c_other_expenses_path.display()
+    );
 
     Ok(())
+}
+
+fn write_schedule_c_csv(output_dir: &Path, rows: &[TaxRow], year_filter: Option<i32>) -> Result<(PathBuf, PathBuf)> {
+    let year_label = year_filter
+        .map(|year| year.to_string())
+        .unwrap_or_else(|| "all".to_string());
+    let suffix = year_filter.map(|year| format!("_{}", year)).unwrap_or_default();
+
+    let income_1099 = 0.0;
+    let income_not_1099: f64 = normalize_currency(
+        rows.iter()
+            .filter(|r| r.entry_type == "Revenue")
+            .map(|r| r.usd_value)
+            .sum(),
+    );
+    let returns_and_allowances = 0.0;
+    let other_income: f64 = normalize_currency(
+        rows.iter()
+            .filter(|r| r.entry_type == "Reimbursement")
+            .map(|r| r.usd_value)
+            .sum(),
+    );
+
+    let mut expense_by_category: BTreeMap<String, f64> = BTreeMap::new();
+    for row in rows.iter().filter(|r| r.entry_type == "Expense") {
+        *expense_by_category.entry(row.category.to_lowercase()).or_insert(0.0) += row.usd_value;
+    }
+
+    let commissions_and_fees = normalize_currency(
+        expense_by_category.get("vote fees").copied().unwrap_or(0.0)
+            + expense_by_category.get("doublezero").copied().unwrap_or(0.0),
+    );
+    let contract_labor = normalize_currency(expense_by_category.get("contractor").copied().unwrap_or(0.0));
+    let office_expenses = normalize_currency(expense_by_category.get("software").copied().unwrap_or(0.0));
+    let rent_or_lease_other = normalize_currency(expense_by_category.get("hosting").copied().unwrap_or(0.0));
+
+    let mapped_expense_categories = ["vote fees", "doublezero", "contractor", "software", "hosting"];
+    let mut other_expenses_detail: BTreeMap<String, f64> = BTreeMap::new();
+    for (category, amount) in &expense_by_category {
+        if mapped_expense_categories.contains(&category.as_str()) {
+            continue;
+        }
+        if *amount != 0.0 {
+            other_expenses_detail.insert(category.to_string(), *amount);
+        }
+    }
+    let other_expenses_total: f64 = normalize_currency(other_expenses_detail.values().sum());
+
+    let schedule_c_path = output_dir.join(format!(
+        "{}{}{}",
+        TAX_SCHEDULE_C_FILENAME.trim_end_matches(".csv"),
+        suffix,
+        ".csv"
+    ));
+    let mut schedule_c = Writer::from_path(&schedule_c_path)?;
+    schedule_c.write_record(["Tax Year", "Section", "Line", "Description", "Amount (USD)"])?;
+
+    // Business income
+    schedule_c.write_record([
+        &year_label,
+        "Business income",
+        "Income reported on Form(s) 1099",
+        "Income reported on Form(s) 1099",
+        &format!("{:.2}", income_1099),
+    ])?;
+    schedule_c.write_record([
+        &year_label,
+        "Business income",
+        "Income not reported on Form(s) 1099",
+        "Taxable external withdrawals (cash-basis)",
+        &format!("{:.2}", income_not_1099),
+    ])?;
+    schedule_c.write_record([
+        &year_label,
+        "Business income",
+        "Returns and allowances",
+        "Returns and allowances",
+        &format!("{:.2}", returns_and_allowances),
+    ])?;
+    schedule_c.write_record([
+        &year_label,
+        "Business income",
+        "Other income",
+        "SFDP vote fee reimbursements",
+        &format!("{:.2}", other_income),
+    ])?;
+
+    // Business expenses
+    schedule_c.write_record([&year_label, "Business expenses", "Advertising", "Advertising", "0.00"])?;
+    schedule_c.write_record([
+        &year_label,
+        "Business expenses",
+        "Commissions and fees",
+        "Vote fees (gross) + DoubleZero network fees",
+        &format!("{:.2}", commissions_and_fees),
+    ])?;
+    schedule_c.write_record([
+        &year_label,
+        "Business expenses",
+        "Contract labor",
+        "Contractor expenses",
+        &format!("{:.2}", contract_labor),
+    ])?;
+    schedule_c.write_record([
+        &year_label,
+        "Business expenses",
+        "Employee benefit programs",
+        "Employee benefit programs",
+        "0.00",
+    ])?;
+    schedule_c.write_record([
+        &year_label,
+        "Business expenses",
+        "Insurance (other than health)",
+        "Insurance (other than health)",
+        "0.00",
+    ])?;
+    schedule_c.write_record([
+        &year_label,
+        "Business expenses",
+        "Interest (mortgage)",
+        "Interest (mortgage)",
+        "0.00",
+    ])?;
+    schedule_c.write_record([
+        &year_label,
+        "Business expenses",
+        "Interest (other)",
+        "Interest (other)",
+        "0.00",
+    ])?;
+    schedule_c.write_record([
+        &year_label,
+        "Business expenses",
+        "Legal and professional services",
+        "Legal and professional services",
+        "0.00",
+    ])?;
+    schedule_c.write_record([
+        &year_label,
+        "Business expenses",
+        "Office expenses",
+        "Software subscriptions and tools",
+        &format!("{:.2}", office_expenses),
+    ])?;
+    schedule_c.write_record([
+        &year_label,
+        "Business expenses",
+        "Pension and profit-sharing plans",
+        "Pension and profit-sharing plans",
+        "0.00",
+    ])?;
+    schedule_c.write_record([
+        &year_label,
+        "Business expenses",
+        "Rent or lease (vehicles, machinery, and equipment)",
+        "Rent or lease (vehicles, machinery, and equipment)",
+        "0.00",
+    ])?;
+    schedule_c.write_record([
+        &year_label,
+        "Business expenses",
+        "Rent or lease (other business property)",
+        "Hosting and infrastructure",
+        &format!("{:.2}", rent_or_lease_other),
+    ])?;
+    schedule_c.write_record([
+        &year_label,
+        "Business expenses",
+        "Repairs and maintenance",
+        "Repairs and maintenance",
+        "0.00",
+    ])?;
+    schedule_c.write_record([&year_label, "Business expenses", "Supplies", "Supplies", "0.00"])?;
+    schedule_c.write_record([
+        &year_label,
+        "Business expenses",
+        "Taxes and licenses",
+        "Taxes and licenses",
+        "0.00",
+    ])?;
+    schedule_c.write_record([&year_label, "Business expenses", "Travel", "Travel", "0.00"])?;
+    schedule_c.write_record([&year_label, "Business expenses", "Meals", "Meals", "0.00"])?;
+    schedule_c.write_record([&year_label, "Business expenses", "Utilities", "Utilities", "0.00"])?;
+    schedule_c.write_record([&year_label, "Business expenses", "Wages", "Wages", "0.00"])?;
+    schedule_c.write_record([
+        &year_label,
+        "Business expenses",
+        "Other expenses (from the table below)",
+        "See companion other-expenses CSV",
+        &format!("{:.2}", other_expenses_total),
+    ])?;
+    schedule_c.flush()?;
+
+    let schedule_c_other_expenses_path = output_dir.join(format!(
+        "{}{}{}",
+        TAX_SCHEDULE_C_OTHER_EXPENSES_FILENAME.trim_end_matches(".csv"),
+        suffix,
+        ".csv"
+    ));
+    let mut other_expenses = Writer::from_path(&schedule_c_other_expenses_path)?;
+    other_expenses.write_record(["Tax Year", "Description", "Amount (USD)", "Source Category"])?;
+    for (category, amount) in other_expenses_detail {
+        other_expenses.write_record([
+            &year_label,
+            &format!("{} expenses", title_case_category(&category)),
+            &format!("{:.2}", amount),
+            &title_case_category(&category),
+        ])?;
+    }
+    other_expenses.flush()?;
+
+    Ok((schedule_c_path, schedule_c_other_expenses_path))
+}
+
+fn title_case_category(category: &str) -> String {
+    category
+        .split_whitespace()
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                Some(first) => format!("{}{}", first.to_uppercase(), chars.as_str()),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<String>>()
+        .join(" ")
+}
+
+fn normalize_currency(value: f64) -> f64 {
+    if value.abs() < 0.005 {
+        0.0
+    } else {
+        value
+    }
 }
 
 // ─── Row builders ──────────────────────────────────────────────────────────

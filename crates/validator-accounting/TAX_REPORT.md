@@ -12,7 +12,10 @@ cargo run -p validator-accounting -- tax
 cargo run -p validator-accounting -- tax --year 2025
 ```
 
-**Output:** `./output/tax_report.csv`
+**Output:**
+- `./output/tax_report.csv` — detailed tax event ledger
+- `./output/tax_schedule_c.csv` (or `tax_schedule_c_<YEAR>.csv` with `--year`) — Schedule C line mapping
+- `./output/tax_schedule_c_other_expenses.csv` (or `tax_schedule_c_other_expenses_<YEAR>.csv`) — detail table for the “Other expenses” line
 
 ---
 
