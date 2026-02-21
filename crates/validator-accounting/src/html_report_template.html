@@ -1219,6 +1219,7 @@
         'tax_expense_hardware',
         'tax_expense_other',
         'tax_reimbursement',
+        'tax_return_capital',
       ],
       taxable_income: ['tax_revenue'],
       deductible_expense: [
@@ -1546,7 +1547,12 @@
     function eventGroup(ev) {
       if (currentViewMode === 'tax') {
         const cls = taxClassForEvent(ev);
-        if (cls === 'taxable_income' || cls === 'deductible_expense' || cls === 'reimbursement') return 'tax_events';
+        if (cls === 'taxable_income' || cls === 'deductible_expense' || cls === 'reimbursement' || cls === 'non_taxable_transfer') {
+          // In tax mode, we want the group to either match the filter exactly (for reimb/withdrawal)
+          // or group under 'tax_events' for 'All'. Wait, passesTypeFilter already handles 'tax_events' acting as 'All'.
+          // So returning the direct class is actually correct! The problem was just `is_pnl` making it `non_pnl` in other parts,
+          // or we previously had logic here that we removed. Let's just return the class directly.
+        }
         return cls;
       }
       if (!ev.is_pnl) return 'non_pnl';
@@ -1576,7 +1582,15 @@
 
     function passesTypeFilter(ev) {
       const group = eventGroup(ev);
-      if (currentTypeGroup !== 'all' && group !== currentTypeGroup) return false;
+
+      if (currentTypeGroup !== 'all') {
+        if (currentViewMode === 'tax' && currentTypeGroup === 'tax_events') {
+          // 'tax_events' acts as 'all' for tax mode filters
+        } else if (group !== currentTypeGroup) {
+          return false;
+        }
+      }
+
       if (currentSubtype !== 'all' && ev.event_type !== currentSubtype) return false;
       return true;
     }
@@ -1601,7 +1615,7 @@
       let maxMonth = null;
 
       for (const ev of events) {
-        if (!ev.is_pnl) continue;
+        if (!ev.is_pnl && currentViewMode !== 'tax') continue;
         const key = monthStartKey(ev.date);
         if (!key) continue;
         const [ys, ms] = key.split('-');
@@ -2140,7 +2154,11 @@
 
     function buildMonthSep(mo, evs) {
       let netUsd = 0;
-      for (const ev of evs) { if (ev.is_pnl) netUsd += ev.amount_usd; }
+      for (const ev of evs) {
+        if (ev.is_pnl || (currentViewMode === 'tax' && ev.event_type !== 'tax_return_capital')) {
+          netUsd += ev.amount_usd;
+        }
+      }
 
       const div = document.createElement('div');
       div.className = 'month-sep';
@@ -2492,26 +2510,33 @@
       { id: '2y', label: '2Y', months: 24 },
     ];
 
+    // Derive data-driven defaults from the last 60 days of timeline events
+    const _initBaselines = deriveBaselines();
     let projState = {
       scenario: 'base',
       horizon: '1y',
-      solPrice: 85,
+      solPrice: _initBaselines.solPrice,
       solDelta: 0,
       stakeGrowth: 0,
-      monthlyHosting: 1355,
-      monthlySoftware: 75,
-      monthlyContractor: 15,
+      monthlyHosting: Math.round(_initBaselines.monthlyHosting) || 1355,
+      monthlySoftware: Math.round(_initBaselines.monthlySoftware) || 75,
+      monthlyContractor: Math.round(_initBaselines.monthlyContractor) || 15,
       dzRate: 5,
-      voteCostPerMonth: 350,
+      voteCostPerMonth: Math.round(_initBaselines.monthlyVoteCost / 10) * 10 || 350,
     };
 
     try {
       const saved = localStorage.getItem('bp_proj_state');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (parsed.voteCostPerMonth === 0 || parsed.sfdpEndDate) {
-          parsed.voteCostPerMonth = 350;
+        // Migrate stale hardcoded defaults to data-derived values
+        if (parsed.voteCostPerMonth === 0 || parsed.voteCostPerMonth === 350 || parsed.sfdpEndDate) {
+          parsed.voteCostPerMonth = projState.voteCostPerMonth;
           delete parsed.sfdpEndDate;
+        }
+        // Enforce scenario consistency: non-custom scenarios define their own stakeGrowth
+        if (parsed.scenario && SCENARIOS[parsed.scenario]) {
+          parsed.stakeGrowth = SCENARIOS[parsed.scenario].stakeGrowth;
         }
         Object.assign(projState, parsed);
       }
@@ -2538,7 +2563,7 @@
 
       let revSum = 0; let dzSum = 0; let evtCount = 0;
       let minEpoch = null, maxEpoch = null;
-      let hostExp = 0, swExp = 0, cExp = 0;
+      let hostExp = 0, swExp = 0, cExp = 0, voteSum = 0;
 
       for (const ev of TIMELINE) {
         const d = parseIsoDate(ev.date);
@@ -2546,6 +2571,7 @@
 
         if (ev.is_pnl && ev.amount_usd > 0) revSum += ev.amount_usd;
         if (ev.event_type === 'doublezero') dzSum += Math.abs(ev.amount_usd);
+        if (ev.event_type === 'vote_cost') voteSum += Math.abs(ev.amount_usd);
 
         if (ev.epoch != null) {
           if (minEpoch === null || ev.epoch < minEpoch) minEpoch = ev.epoch;
@@ -2563,14 +2589,24 @@
       }
 
       const monthsPassed = 60 / 30.44;
+      const epochsPerMonth = maxEpoch && minEpoch ? (maxEpoch - minEpoch) / monthsPassed : 15;
+
+      // Estimate monthly vote cost from actual data if available; fall back to
+      // typical Solana vote fee (2.155 SOL/epoch) at current SOL price.
+      const solPx = currentSolPrice();
+      const monthlyVoteCost = voteSum > 0
+        ? voteSum / monthsPassed
+        : 2.155 * epochsPerMonth * solPx;
+
       return {
         monthlyRevenue: revSum / monthsPassed,
         monthlyDz: dzSum / monthsPassed,
         monthlyHosting: hostExp / monthsPassed,
         monthlySoftware: swExp / monthsPassed,
         monthlyContractor: cExp / monthsPassed,
-        epochsPerMonth: maxEpoch && minEpoch ? (maxEpoch - minEpoch) / monthsPassed : 15,
-        solPrice: currentSolPrice()
+        monthlyVoteCost,
+        epochsPerMonth,
+        solPrice: solPx
       };
     }
 
@@ -2587,9 +2623,9 @@
       return monthly;
     }
 
-    function computeProjections() {
+    function computeProjections(overrideMonths) {
       const baselines = deriveBaselines();
-      const horizonMonths = (HORIZONS.find(h => h.id === projState.horizon) || HORIZONS[1]).months;
+      const horizonMonths = overrideMonths !== undefined ? overrideMonths : (HORIZONS.find(h => h.id === projState.horizon) || HORIZONS[1]).months;
       const lastEv = TIMELINE[TIMELINE.length - 1];
       const currentProfit = lastEv ? lastEv.cumulative_profit_usd : 0;
 
@@ -2673,6 +2709,46 @@
       if (projPnlChart) projPnlChart.destroy();
 
       const skipIndex = histKeys.length;
+      const currentEpoch = latestEpochInTimeline();
+      const epochsPerMo = data.baselines.epochsPerMonth;
+
+      const sfdpTaperPlugin = {
+        id: 'sfdpTaperLines',
+        afterDraw(chart) {
+          const { ctx: c, scales: { x, y } } = chart;
+          const meta = chart.getDatasetMeta(0);
+          if (!meta || !meta.data || meta.data.length === 0) return;
+          for (const step of SFDP_TAPER) {
+            if (step.coverage >= 1.0) continue;
+            const epochsFromNow = step.startEpoch - currentEpoch;
+            if (epochsFromNow <= 0) continue;
+            const monthsFromNow = epochsFromNow / epochsPerMo;
+            const barIdx = histKeys.length + 1 + monthsFromNow;
+            const leftIdx = Math.floor(barIdx);
+            const rightIdx = Math.ceil(barIdx);
+            const frac = barIdx - leftIdx;
+            if (leftIdx < 0 || rightIdx >= meta.data.length) continue;
+            const lx = meta.data[leftIdx] ? meta.data[leftIdx].x : null;
+            const rx = meta.data[rightIdx] ? meta.data[rightIdx].x : null;
+            if (lx === null || rx === null) continue;
+            const xPos = lx + (rx - lx) * frac;
+            const pct = Math.round(step.coverage * 100);
+            c.save();
+            c.beginPath();
+            c.setLineDash([3, 3]);
+            c.strokeStyle = 'rgba(160, 120, 60, 0.55)';
+            c.lineWidth = 1;
+            c.moveTo(xPos, y.top);
+            c.lineTo(xPos, y.bottom);
+            c.stroke();
+            c.fillStyle = 'rgba(140, 100, 40, 0.75)';
+            c.font = '8px monospace';
+            c.textAlign = 'center';
+            c.fillText(`${pct}%`, xPos, y.top + 9);
+            c.restore();
+          }
+        }
+      };
 
       projPnlChart = new Chart(ctx, {
         type: 'bar',
@@ -2695,6 +2771,7 @@
             }
           ]
         },
+        plugins: [sfdpTaperPlugin],
         options: {
           responsive: true, maintainAspectRatio: false,
           layout: { padding: { bottom: 0 } },
@@ -2813,7 +2890,8 @@
 
     function computeAndPaintProjections() {
       const data = computeProjections();
-      renderProjectionChart(data);
+      const chartData = computeProjections(12);
+      renderProjectionChart({ ...data, projected: chartData.projected });
       renderProjectionBreakdowns(data);
       renderProjectionTable(data);
 
@@ -2867,7 +2945,7 @@
         const v = parseFloat(e.target.value);
         span.textContent = formatFn(v);
         projState[key] = v;
-        if (key !== 'solDelta' && key !== 'stakeGrowth') projState.scenario = 'custom';
+        if (key !== 'solDelta') projState.scenario = 'custom';
         saveProjState();
         computeAndPaintProjections();
         renderProjectionsUI();
@@ -2919,7 +2997,7 @@
       buildSliderField(projCostFieldsEl, 'Software $/mo', 'monthlySoftware', 0, 500, 5, v => '$' + v);
       buildSliderField(projCostFieldsEl, 'Contractor $/mo', 'monthlyContractor', 0, 500, 5, v => '$' + v);
       buildSliderField(projCostFieldsEl, 'DZ Fee Rate %', 'dzRate', 0, 15, 0.5, v => v.toFixed(1) + '%');
-      buildSliderField(projCostFieldsEl, 'Vote Cost $/mo', 'voteCostPerMonth', 0, 1000, 10, v => '$' + v);
+      buildSliderField(projCostFieldsEl, 'Vote Cost $/mo', 'voteCostPerMonth', 0, 5000, 50, v => '$' + v.toLocaleString());
 
       const taperEl = document.getElementById('proj-sfdp-taper');
       if (taperEl) {
