@@ -1199,7 +1199,7 @@
     const taxTypeGroupOptions = [
       { id: 'tax_events', label: 'All' },
       { id: 'reimbursement', label: 'Reimb.' },
-      { id: 'non_taxable_transfer', label: 'Withdrawal' },
+      { id: 'withdrawals', label: 'Withdrawal' },
     ];
 
     const operatingSubtypeMap = {
@@ -1221,7 +1221,6 @@
         'tax_reimbursement',
         'tax_return_capital',
       ],
-      taxable_income: ['tax_revenue'],
       deductible_expense: [
         'tax_expense_vote_fees',
         'tax_expense_doublezero',
@@ -1232,7 +1231,7 @@
         'tax_expense_other',
       ],
       reimbursement: ['tax_reimbursement'],
-      non_taxable_transfer: ['tax_return_capital'],
+      withdrawals: ['tax_revenue', 'tax_return_capital'],
     };
 
     let pnlChartInstance = null;
@@ -1547,12 +1546,7 @@
     function eventGroup(ev) {
       if (currentViewMode === 'tax') {
         const cls = taxClassForEvent(ev);
-        if (cls === 'taxable_income' || cls === 'deductible_expense' || cls === 'reimbursement' || cls === 'non_taxable_transfer') {
-          // In tax mode, we want the group to either match the filter exactly (for reimb/withdrawal)
-          // or group under 'tax_events' for 'All'. Wait, passesTypeFilter already handles 'tax_events' acting as 'All'.
-          // So returning the direct class is actually correct! The problem was just `is_pnl` making it `non_pnl` in other parts,
-          // or we previously had logic here that we removed. Let's just return the class directly.
-        }
+        if (cls === 'taxable_income' || cls === 'non_taxable_transfer') return 'withdrawals';
         return cls;
       }
       if (!ev.is_pnl) return 'non_pnl';
