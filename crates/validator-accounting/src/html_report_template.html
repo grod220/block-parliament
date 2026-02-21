@@ -210,6 +210,7 @@
 
     .stats-row {
       display: flex;
+      flex-wrap: wrap;
       gap: 12px;
       margin-bottom: 12px;
     }
@@ -793,16 +794,21 @@
 
     .mode-projections #projections-panel {
       display: block;
+      grid-column: 1 / -1;
     }
 
     .proj-layout {
       display: grid;
-      grid-template-columns: 2fr 1fr;
+      grid-template-columns: 1fr 340px;
       gap: 14px;
       align-items: start;
     }
 
-    @media (max-width: 1280px) {
+    .proj-table-section {
+      overflow-x: auto;
+    }
+
+    @media (max-width: 820px) {
       .proj-layout {
         grid-template-columns: 1fr;
       }
@@ -861,6 +867,7 @@
 
     table.proj-table {
       width: 100%;
+      min-width: 480px;
       border-collapse: collapse;
       font-size: 11px;
       text-align: right;
@@ -898,6 +905,11 @@
       color: var(--timeline-expense);
     }
 
+    #proj-scenario-btns,
+    #proj-horizon-btns {
+      flex-wrap: wrap;
+    }
+
     .proj-scenario-btn {
       background: transparent;
       border: 1px dotted var(--rule);
@@ -906,6 +918,7 @@
       font-size: 11px;
       padding: 4px 8px;
       cursor: pointer;
+      white-space: nowrap;
     }
 
     .proj-scenario-btn:hover {
@@ -999,6 +1012,20 @@
     </div>
 
     <div id="projections-panel">
+      <div class="stats-row" style="margin-bottom: 14px;">
+        <div class="stat-card">
+          <div class="stat-label" id="proj-label-profit">Projected Annual P/L</div>
+          <div class="stat-value positive" id="proj-stat-profit">$0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label" id="proj-label-revenue">Monthly Run Rate</div>
+          <div class="stat-value positive" id="proj-stat-revenue">$0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label" id="proj-label-expenses">—</div>
+          <div class="stat-value negative" id="proj-stat-expenses">$0</div>
+        </div>
+      </div>
       <div class="proj-layout">
         <div class="proj-main">
           <div class="dashboard-card" style="margin-bottom: 14px;">
@@ -1040,25 +1067,25 @@
             <div id="proj-sfdp-taper" style="margin-top: 8px; font-size: 11px;"></div>
           </div>
 
-          <div class="proj-section">
-            <div class="proj-section-title">─┤ Monthly Projection Table ├─</div>
-            <table class="proj-table" id="proj-table">
-              <thead>
-                <tr>
-                  <th>MONTH</th>
-                  <th>REVENUE</th>
-                  <th>EXPENSES</th>
-                  <th>NET P/L</th>
-                  <th>CUMULATIVE</th>
-                </tr>
-              </thead>
-              <tbody></tbody>
-            </table>
-            <div style="font-size: 9px; color: var(--ink-lighter, #bbb); margin-top: 12px; font-style: italic;">
-              Projection based on recent 60-day averages, <span id="proj-note-horizon"></span> horizon. SOL price:
-              $<span id="proj-note-sol"></span>.
-            </div>
-          </div>
+        </div>
+      </div>
+      <div class="proj-section proj-table-section">
+        <div class="proj-section-title">─┤ Monthly Projection Table ├─</div>
+        <table class="proj-table" id="proj-table">
+          <thead>
+            <tr>
+              <th>MONTH</th>
+              <th>REVENUE</th>
+              <th>EXPENSES</th>
+              <th>NET P/L</th>
+              <th>CUMULATIVE</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div style="font-size: 9px; color: var(--ink-lighter, #bbb); margin-top: 12px; font-style: italic;">
+          Projection based on recent 60-day averages, <span id="proj-note-horizon"></span> horizon. SOL price:
+          $<span id="proj-note-sol"></span>.
         </div>
       </div>
     </div>
@@ -1067,6 +1094,7 @@
   <script>
     const TIMELINE = __TIMELINE_JSON__;
     const TAX_TIMELINE = __TAX_TIMELINE_JSON__;
+    const TAX_YEAR = __TAX_YEAR__; // null or a specific year (e.g. 2025)
 
     // ── Cached DOM refs ──────────────────────────────────────────────────────────
     const profitEl = document.getElementById('stat-profit');
@@ -1169,12 +1197,9 @@
     ];
 
     const taxTypeGroupOptions = [
-      { id: 'tax_events', label: 'Tax events' },
-      { id: 'all', label: 'All rows' },
-      { id: 'taxable_income', label: 'Taxable' },
-      { id: 'deductible_expense', label: 'Deductible' },
+      { id: 'tax_events', label: 'All' },
       { id: 'reimbursement', label: 'Reimb.' },
-      { id: 'non_taxable_transfer', label: 'Transfers' },
+      { id: 'non_taxable_transfer', label: 'Withdrawal' },
     ];
 
     const operatingSubtypeMap = {
@@ -1234,16 +1259,27 @@
       'other': isDark ? '#adb5bd' : '#6b7280',
     };
     let uiUpdateTimer = null;
+    let inViewTransition = false;
 
     function withUiTransition(work) {
       if (document.startViewTransition) {
-        document.startViewTransition(work);
+        inViewTransition = true;
+        const vt = document.startViewTransition(() => {
+          work();
+          inViewTransition = false;
+        });
+        vt.finished.then(() => {
+          if (!rafId) rafId = requestAnimationFrame(animateHeader);
+        });
         return;
       }
 
       const layout = document.getElementById('content-layout');
       layout.classList.add('ui-updating');
+      inViewTransition = true;
       work();
+      inViewTransition = false;
+      if (!rafId) rafId = requestAnimationFrame(animateHeader);
 
       if (uiUpdateTimer) clearTimeout(uiUpdateTimer);
       uiUpdateTimer = setTimeout(() => {
@@ -1378,6 +1414,7 @@
       if (currentViewMode === 'tax') {
         const cls = taxClassForEvent(ev);
         if (cls === 'taxable_income') return 'tone-income';
+        if (cls === 'reimbursement') return 'tone-income';
         if (cls === 'deductible_expense') return 'tone-expense';
         if (cls === 'needs_review') return 'tone-review';
         return 'tone-neutral';
@@ -1433,10 +1470,10 @@
     function applyModeText() {
       if (currentViewMode === 'tax') {
         profitLabelEl.textContent = 'Net Tax Result';
-        revenueLabelEl.textContent = 'Taxable Income';
+        revenueLabelEl.textContent = 'Gross Income';
         expensesLabelEl.textContent = 'Deductions';
-        monthlyTitleEl.textContent = '─┤ Monthly Taxable vs Deductible ├─';
-        incomeTitleEl.textContent = '─┤ Taxable Income Breakdown ├─';
+        monthlyTitleEl.textContent = '─┤ Monthly Gross Income vs Deductible ├─';
+        incomeTitleEl.textContent = '─┤ Income Breakdown ├─';
         expenseTitleEl.textContent = '─┤ Deduction Breakdown ├─';
       } else if (currentViewMode === 'projections') {
         profitLabelEl.textContent = 'Projected Annual P/L';
@@ -1452,11 +1489,25 @@
       }
     }
 
+    function latestYearInEvents(events) {
+      let max = 0;
+      for (const ev of events) {
+        const m = /^(\d{4})-/.exec(ev.date);
+        if (m) max = Math.max(max, parseInt(m[1], 10));
+      }
+      return max > 0 ? String(max) : null;
+    }
+
     function setViewMode(mode) {
       if (mode === currentViewMode) return;
       currentViewMode = mode;
       currentTypeGroup = mode === 'tax' ? 'tax_events' : 'all';
       currentSubtype = 'all';
+      // Default to the most recent year present in the tax data.
+      if (mode === 'tax') {
+        const latest = latestYearInEvents(TAX_TIMELINE);
+        if (latest) currentDateRange = latest;
+      }
 
       const isProj = mode === 'projections';
       document.body.classList.toggle('mode-projections', isProj);
@@ -1642,7 +1693,7 @@
         dashEl.style.display = 'none';
         return;
       }
-      dashEl.style.display = 'block';
+      dashEl.style.display = '';
 
       const monthKeys = monthKeysForEvents(events);
       if (!monthKeys.length) {
@@ -1958,6 +2009,8 @@
       while (typeGroupTabsEl.firstChild) typeGroupTabsEl.removeChild(typeGroupTabsEl.firstChild);
       while (typeSubTabsEl.firstChild) typeSubTabsEl.removeChild(typeSubTabsEl.firstChild);
 
+      typeGroupTabsEl.style.display = '';
+
       for (const group of getTypeGroupOptions()) {
         const btn = document.createElement('button');
         btn.className = 'filter-btn' + (currentTypeGroup === group.id ? ' active' : '');
@@ -1970,7 +2023,7 @@
         typeGroupTabsEl.appendChild(btn);
       }
 
-      if (currentTypeGroup === 'all') return;
+      if (currentTypeGroup === 'all' || currentViewMode === 'tax') return;
 
       const allSub = document.createElement('button');
       allSub.className = 'filter-btn' + (currentSubtype === 'all' ? ' active' : '');
@@ -2292,6 +2345,10 @@
     }
 
     function updateHeaderDisplay(profit, revenue, expenses, instant) {
+      if (inViewTransition) {
+        targetProfit = profit; targetRevenue = revenue; targetExpenses = expenses;
+        return;
+      }
       if (instant) {
         displayProfit = profit; displayRevenue = revenue; displayExpenses = expenses;
         paintHeader();
@@ -2343,6 +2400,7 @@
 
     function setHeaderInstant(profit, revenue, expenses) {
       targetProfit = profit; targetRevenue = revenue; targetExpenses = expenses;
+      if (inViewTransition) return;
       displayProfit = profit; displayRevenue = revenue; displayExpenses = expenses;
       paintHeader();
     }
@@ -2769,10 +2827,26 @@
       const annNet = annRev - annExp;
 
       updateHeaderDisplay(annNet, annRev / 12, annExp / 12, false);
-      if (annNet >= 0) expensesLabelEl.textContent = 'Already profitable';
-      else {
-        let beMonths = annExp / (annRev / 12) * 12;
-        expensesLabelEl.textContent = `BE in ~${beMonths.toFixed(1)}mo`;
+
+      const projProfitEl = document.getElementById('proj-stat-profit');
+      const projRevenueEl = document.getElementById('proj-stat-revenue');
+      const projExpensesEl = document.getElementById('proj-stat-expenses');
+      const projLabelProfit = document.getElementById('proj-label-profit');
+      const projLabelRevenue = document.getElementById('proj-label-revenue');
+      const projLabelExpenses = document.getElementById('proj-label-expenses');
+      if (projProfitEl) {
+        projLabelProfit.textContent = 'Projected Annual P/L';
+        projLabelRevenue.textContent = 'Monthly Run Rate';
+        projProfitEl.textContent = formatUsd(annNet);
+        projProfitEl.className = 'stat-value ' + (annNet >= 0 ? 'positive' : 'negative');
+        projRevenueEl.textContent = formatUsd(annRev / 12);
+        projExpensesEl.textContent = formatUsd(annExp / 12);
+        if (annNet >= 0) {
+          projLabelExpenses.textContent = 'Already Profitable';
+        } else {
+          const beMonths = annExp / (annRev / 12);
+          projLabelExpenses.textContent = `BE in ~${beMonths.toFixed(1)}mo`;
+        }
       }
     }
 

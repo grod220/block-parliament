@@ -40,6 +40,7 @@ fn sort_date(d: &str) -> &str {
 /// income sources first, then expenses, then balance-sheet items.
 fn type_order(event_type: &str) -> u8 {
     match event_type {
+        // Operating timeline types
         "commission" => 0,
         "leader_fees" => 1,
         "mev" => 2,
@@ -50,6 +51,18 @@ fn type_order(event_type: &str) -> u8 {
         "seeding" => 7,
         "withdrawal" => 8,
         "doublezero_payment" => 9,
+        // Tax timeline types — matches the CSV sort order:
+        // Revenue > Return of Capital > Reimbursement > Expenses
+        "tax_revenue" => 0,
+        "tax_return_capital" => 1,
+        "tax_reimbursement" => 2,
+        "tax_expense_vote_fees" => 3,
+        "tax_expense_doublezero" => 4,
+        "tax_expense_hosting" => 5,
+        "tax_expense_software" => 6,
+        "tax_expense_contractor" => 7,
+        "tax_expense_hardware" => 8,
+        "tax_expense_other" => 9,
         _ => 10,
     }
 }
@@ -463,7 +476,7 @@ pub fn build_tax_timeline(data: &ReportData) -> Vec<TimelineEvent> {
 }
 
 /// Write a self-contained `report.html` to `output_dir`.
-pub fn generate_html_report(output_dir: &Path, data: &ReportData) -> Result<()> {
+pub fn generate_html_report(output_dir: &Path, data: &ReportData, year_filter: Option<i32>) -> Result<()> {
     let timeline = build_timeline(data);
     let tax_timeline = build_tax_timeline(data);
     let timeline_json = serde_json::to_string(&timeline)?;
@@ -475,18 +488,23 @@ pub fn generate_html_report(output_dir: &Path, data: &ReportData) -> Result<()> 
     let timeline_json = timeline_json.replace("</", r"<\/");
     let tax_timeline_json = tax_timeline_json.replace("</", r"<\/");
 
-    let html = build_html(&timeline_json, &tax_timeline_json);
+    let html = build_html(&timeline_json, &tax_timeline_json, year_filter);
     let path = output_dir.join("report.html");
     std::fs::write(&path, html)?;
     println!("  Generated: {}", path.display());
     Ok(())
 }
 
-fn build_html(timeline_json: &str, tax_timeline_json: &str) -> String {
+fn build_html(timeline_json: &str, tax_timeline_json: &str, year_filter: Option<i32>) -> String {
     // The HTML template is a raw string literal embedded at compile time.
     // The JSON data is injected at a single marker so the template stays readable.
     let template = include_str!("html_report_template.html");
+    let tax_year_js = match year_filter {
+        Some(y) => y.to_string(),
+        None => "null".to_string(),
+    };
     template
         .replacen("__TIMELINE_JSON__", timeline_json, 1)
         .replacen("__TAX_TIMELINE_JSON__", tax_timeline_json, 1)
+        .replacen("__TAX_YEAR__", &tax_year_js, 1)
 }
