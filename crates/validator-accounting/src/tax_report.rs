@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use crate::config::Config;
 use crate::doublezero::DoubleZeroFee;
 use crate::expenses::Expense;
-use crate::prices::{get_price, PriceCache};
+use crate::prices::{PriceCache, get_price};
 use crate::transactions::{CategorizedTransfers, SolTransfer};
 use crate::vote_costs::EpochVoteCost;
 
@@ -391,11 +391,7 @@ fn title_case_category(category: &str) -> String {
 }
 
 fn normalize_currency(value: f64) -> f64 {
-    if value.abs() < 0.005 {
-        0.0
-    } else {
-        value
-    }
+    if value.abs() < 0.005 { 0.0 } else { value }
 }
 
 // ─── Row builders ──────────────────────────────────────────────────────────
