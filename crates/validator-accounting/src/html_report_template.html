@@ -776,6 +776,149 @@
         transition-duration: 0.01ms !important;
       }
     }
+
+    /* ── Projections Mode ── */
+    .mode-projections #timeline-panel {
+      display: none;
+    }
+
+    .mode-projections #dashboard-container {
+      display: none;
+    }
+
+    #projections-panel {
+      display: none;
+      margin-top: 14px;
+    }
+
+    .mode-projections #projections-panel {
+      display: block;
+    }
+
+    .proj-layout {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 14px;
+      align-items: start;
+    }
+
+    @media (max-width: 1280px) {
+      .proj-layout {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .proj-section {
+      background: var(--paper);
+      border: 1px solid var(--rule);
+      padding: 14px;
+      margin-bottom: 14px;
+    }
+
+    .proj-section-title {
+      font-weight: bold;
+      text-transform: uppercase;
+      font-size: 11px;
+      letter-spacing: 0.05em;
+      margin-bottom: 12px;
+      color: var(--ink-light);
+    }
+
+    .proj-field {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .proj-field-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    input[type=range].proj-slider {
+      -webkit-appearance: none;
+      width: 100px;
+      background: transparent;
+    }
+
+    input[type=range].proj-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      height: 12px;
+      width: 8px;
+      background: var(--ink);
+      cursor: pointer;
+      margin-top: -5px;
+    }
+
+    input[type=range].proj-slider::-webkit-slider-runnable-track {
+      width: 100%;
+      height: 2px;
+      cursor: pointer;
+      background: var(--rule-light, #ccc);
+    }
+
+    table.proj-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+      text-align: right;
+    }
+
+    table.proj-table th {
+      font-weight: normal;
+      color: var(--ink-light);
+      padding: 6px 4px 6px 16px;
+      border-bottom: 1px solid var(--rule);
+      text-align: right;
+    }
+
+    table.proj-table th:first-child,
+    table.proj-table td:first-child {
+      text-align: left;
+      padding-left: 0;
+    }
+
+    table.proj-table th:last-child,
+    table.proj-table td:last-child {
+      padding-right: 0;
+    }
+
+    table.proj-table td {
+      padding: 6px 4px 6px 16px;
+      border-bottom: 1px dotted var(--rule-light);
+    }
+
+    table.proj-table td.positive {
+      color: var(--timeline-income);
+    }
+
+    table.proj-table td.negative {
+      color: var(--timeline-expense);
+    }
+
+    .proj-scenario-btn {
+      background: transparent;
+      border: 1px dotted var(--rule);
+      color: var(--ink-light);
+      font-family: inherit;
+      font-size: 11px;
+      padding: 4px 8px;
+      cursor: pointer;
+    }
+
+    .proj-scenario-btn:hover {
+      border-color: var(--ink);
+      color: var(--ink);
+    }
+
+    .proj-scenario-btn.active {
+      border-color: var(--ink);
+      color: var(--ink);
+      font-weight: bold;
+      border-style: solid;
+    }
   </style>
 </head>
 
@@ -788,6 +931,7 @@
         <div class="mode-toggle">
           <button class="mode-btn active" id="btn-mode-operating" onclick="setViewMode('operating')">Operating</button>
           <button class="mode-btn" id="btn-mode-tax" onclick="setViewMode('tax')">Tax</button>
+          <button class="mode-btn" id="btn-mode-projections" onclick="setViewMode('projections')">Projections</button>
         </div>
         <div class="unit-toggle">
           <button class="unit-btn active" id="btn-usd" onclick="setUnit('usd')">USD</button>
@@ -831,7 +975,8 @@
       <div class="dashboard-grid">
         <!-- Main PnL Chart -->
         <div class="dashboard-card dashboard-card-main">
-          <div class="dashboard-card-title" id="title-monthly">&#x2500;&#x2524; Net Monthly Performance &#x251C;&#x2500;</div>
+          <div class="dashboard-card-title" id="title-monthly">&#x2500;&#x2524; Net Monthly Performance &#x251C;&#x2500;
+          </div>
           <div class="dashboard-chart-tall"><canvas id="chart-pnl"></canvas></div>
         </div>
 
@@ -851,6 +996,71 @@
 
     <div id="timeline-panel">
       <div id="timeline"></div>
+    </div>
+
+    <div id="projections-panel">
+      <div class="proj-layout">
+        <div class="proj-main">
+          <div class="dashboard-card" style="margin-bottom: 14px;">
+            <div class="dashboard-card-title">&#x2500;&#x2524; Projected P/L &#x251C;&#x2500;</div>
+            <div class="dashboard-chart-tall"><canvas id="chart-proj-pnl"></canvas></div>
+          </div>
+
+          <div class="dashboard-grid">
+            <div class="dashboard-card">
+              <div class="dashboard-card-title">&#x2500;&#x2524; Revenue Projection &#x251C;&#x2500;</div>
+              <div class="dashboard-chart" style="min-height:200px;"><canvas id="chart-proj-rev"></canvas></div>
+            </div>
+            <div class="dashboard-card">
+              <div class="dashboard-card-title">&#x2500;&#x2524; Cost Projection &#x251C;&#x2500;</div>
+              <div class="dashboard-chart" style="min-height:200px;"><canvas id="chart-proj-cost"></canvas></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="proj-sidebar">
+          <div class="proj-section">
+            <div class="proj-section-title">─┤ Scenario ├─</div>
+            <div style="display: flex; gap: 6px;" id="proj-scenario-btns"></div>
+          </div>
+
+          <div class="proj-section">
+            <div class="proj-section-title">─┤ Projection Horizon ├─</div>
+            <div style="display: flex; gap: 6px;" id="proj-horizon-btns"></div>
+          </div>
+
+          <div class="proj-section">
+            <div class="proj-section-title">─┤ Revenue Assumptions ├─</div>
+            <div id="proj-rev-fields"></div>
+          </div>
+
+          <div class="proj-section">
+            <div class="proj-section-title">─┤ Cost Assumptions ├─</div>
+            <div id="proj-cost-fields"></div>
+            <div id="proj-sfdp-taper" style="margin-top: 8px; font-size: 11px;"></div>
+          </div>
+
+          <div class="proj-section">
+            <div class="proj-section-title">─┤ Monthly Projection Table ├─</div>
+            <table class="proj-table" id="proj-table">
+              <thead>
+                <tr>
+                  <th>MONTH</th>
+                  <th>REVENUE</th>
+                  <th>EXPENSES</th>
+                  <th>NET P/L</th>
+                  <th>CUMULATIVE</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+            <div style="font-size: 9px; color: var(--ink-lighter, #bbb); margin-top: 12px; font-style: italic;">
+              Projection based on recent 60-day averages, <span id="proj-note-horizon"></span> horizon. SOL price:
+              $<span id="proj-note-sol"></span>.
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -1228,6 +1438,10 @@
         monthlyTitleEl.textContent = '─┤ Monthly Taxable vs Deductible ├─';
         incomeTitleEl.textContent = '─┤ Taxable Income Breakdown ├─';
         expenseTitleEl.textContent = '─┤ Deduction Breakdown ├─';
+      } else if (currentViewMode === 'projections') {
+        profitLabelEl.textContent = 'Projected Annual P/L';
+        revenueLabelEl.textContent = 'Monthly Run Rate';
+        expensesLabelEl.textContent = 'Break-Even';
       } else {
         profitLabelEl.textContent = 'Net P/L';
         revenueLabelEl.textContent = 'Revenue';
@@ -1243,10 +1457,24 @@
       currentViewMode = mode;
       currentTypeGroup = mode === 'tax' ? 'tax_events' : 'all';
       currentSubtype = 'all';
+
+      const isProj = mode === 'projections';
+      document.body.classList.toggle('mode-projections', isProj);
+
       document.getElementById('btn-mode-operating').classList.toggle('active', mode === 'operating');
       document.getElementById('btn-mode-tax').classList.toggle('active', mode === 'tax');
+      document.getElementById('btn-mode-projections').classList.toggle('active', mode === 'projections');
+
+      const filtersEl = document.querySelector('.header-filters');
+      if (filtersEl) filtersEl.style.display = isProj ? 'none' : '';
+
       applyModeText();
-      render({ animate: true, scrollToBottom: true });
+      if (isProj) {
+        if (!projInitDone) initProjections();
+        renderProjections();
+      } else {
+        render({ animate: true, scrollToBottom: true });
+      }
     }
 
     function dateRangeStart(rangeId, endDate) {
@@ -2154,10 +2382,511 @@
       if (resizeDebounce) clearTimeout(resizeDebounce);
       resizeDebounce = setTimeout(() => {
         syncStickyOffsets();
-        renderDashboard(currentRenderedEvents);
-        applyAnchorFromViewport(true);
+        if (currentViewMode !== 'projections') {
+          renderDashboard(currentRenderedEvents);
+          applyAnchorFromViewport(true);
+        } else {
+          renderProjections();
+        }
       }, 120);
     }, { passive: true });
+
+    // ── Projections Engine ──────────────────────────────────────────────────────
+
+    let projInitDone = false;
+    let projPnlChart = null;
+    let projRevChart = null;
+    let projCostChart = null;
+
+    const SCENARIOS = {
+      base: { label: 'Base Case', solDelta: 0, stakeGrowth: 0, costGrowth: 0 },
+      bear: { label: 'Bear Market', solDelta: -40, stakeGrowth: 0, costGrowth: 0 },
+      bull: { label: 'Bull Market', solDelta: 60, stakeGrowth: 5, costGrowth: 0 },
+    };
+
+    const SFDP_TAPER = [
+      { startEpoch: 896, coverage: 1.00 },   // 100%
+      { startEpoch: 941, coverage: 0.75 },   //  75%
+      { startEpoch: 986, coverage: 0.50 },   //  50%
+      { startEpoch: 1031, coverage: 0.25 },  //  25%
+      { startEpoch: 1076, coverage: 0.00 },  //   0%
+    ];
+
+    function sfdpCoverageAtEpoch(epoch) {
+      for (let i = SFDP_TAPER.length - 1; i >= 0; i--) {
+        if (epoch >= SFDP_TAPER[i].startEpoch) return SFDP_TAPER[i].coverage;
+      }
+      return 1.0;
+    }
+
+    function latestEpochInTimeline() {
+      let maxE = 0;
+      for (const ev of TIMELINE) {
+        if (ev.epoch != null && ev.epoch > maxE) maxE = ev.epoch;
+      }
+      return maxE;
+    }
+
+    const HORIZONS = [
+      { id: '3m', label: '3M', months: 3 },
+      { id: '6m', label: '6M', months: 6 },
+      { id: '1y', label: '1Y', months: 12 },
+      { id: '2y', label: '2Y', months: 24 },
+    ];
+
+    let projState = {
+      scenario: 'base',
+      horizon: '1y',
+      solPrice: 85,
+      solDelta: 0,
+      stakeGrowth: 0,
+      monthlyHosting: 1355,
+      monthlySoftware: 75,
+      monthlyContractor: 15,
+      dzRate: 5,
+      voteCostPerMonth: 350,
+    };
+
+    try {
+      const saved = localStorage.getItem('bp_proj_state');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.voteCostPerMonth === 0 || parsed.sfdpEndDate) {
+          parsed.voteCostPerMonth = 350;
+          delete parsed.sfdpEndDate;
+        }
+        Object.assign(projState, parsed);
+      }
+    } catch (e) { }
+
+    function saveProjState() {
+      try { localStorage.setItem('bp_proj_state', JSON.stringify(projState)); } catch (e) { }
+    }
+
+    function applyScenario(id) {
+      const s = SCENARIOS[id];
+      if (!s) return;
+      projState.scenario = id;
+      projState.solDelta = s.solDelta;
+      projState.stakeGrowth = s.stakeGrowth;
+      saveProjState();
+      renderProjections();
+    }
+
+    function deriveBaselines() {
+      const lastDate = latestTimelineDate(TIMELINE);
+      const cutoff = new Date(lastDate);
+      cutoff.setUTCDate(cutoff.getUTCDate() - 60);
+
+      let revSum = 0; let dzSum = 0; let evtCount = 0;
+      let minEpoch = null, maxEpoch = null;
+      let hostExp = 0, swExp = 0, cExp = 0;
+
+      for (const ev of TIMELINE) {
+        const d = parseIsoDate(ev.date);
+        if (!d || d < cutoff) continue;
+
+        if (ev.is_pnl && ev.amount_usd > 0) revSum += ev.amount_usd;
+        if (ev.event_type === 'doublezero') dzSum += Math.abs(ev.amount_usd);
+
+        if (ev.epoch != null) {
+          if (minEpoch === null || ev.epoch < minEpoch) minEpoch = ev.epoch;
+          if (maxEpoch === null || ev.epoch > maxEpoch) maxEpoch = ev.epoch;
+        }
+
+        if (ev.event_type === 'expense') {
+          const amt = Math.abs(ev.amount_usd);
+          const l = (ev.label || '').toLowerCase();
+          if (l.includes('hosting')) hostExp += amt;
+          else if (l.includes('software')) swExp += amt;
+          else if (l.includes('contractor')) cExp += amt;
+        }
+        evtCount++;
+      }
+
+      const monthsPassed = 60 / 30.44;
+      return {
+        monthlyRevenue: revSum / monthsPassed,
+        monthlyDz: dzSum / monthsPassed,
+        monthlyHosting: hostExp / monthsPassed,
+        monthlySoftware: swExp / monthsPassed,
+        monthlyContractor: cExp / monthsPassed,
+        epochsPerMonth: maxEpoch && minEpoch ? (maxEpoch - minEpoch) / monthsPassed : 15,
+        solPrice: currentSolPrice()
+      };
+    }
+
+    function getHistoricalMonthly() {
+      const monthly = {};
+      for (const ev of TIMELINE) {
+        if (!ev.is_pnl) continue;
+        const k = monthStartKey(ev.date);
+        if (!k) continue;
+        if (!monthly[k]) monthly[k] = { revenue: 0, expenses: 0 };
+        if (ev.amount_usd > 0) monthly[k].revenue += ev.amount_usd;
+        else monthly[k].expenses += Math.abs(ev.amount_usd);
+      }
+      return monthly;
+    }
+
+    function computeProjections() {
+      const baselines = deriveBaselines();
+      const horizonMonths = (HORIZONS.find(h => h.id === projState.horizon) || HORIZONS[1]).months;
+      const lastEv = TIMELINE[TIMELINE.length - 1];
+      const currentProfit = lastEv ? lastEv.cumulative_profit_usd : 0;
+
+      const currentSol = baselines.solPrice;
+      const targetSol = currentSol * (1 + projState.solDelta / 100);
+
+      const baseMonthlyRevenue = baselines.monthlyRevenue;
+      const baseMonthlyDz = baselines.monthlyDz;
+
+      const historicalMonthly = getHistoricalMonthly();
+      const histKeys = Object.keys(historicalMonthly).sort();
+
+      const lastDate = latestTimelineDate(TIMELINE);
+      const projectedMonths = [];
+      let cumProfit = currentProfit;
+
+      for (let i = 1; i <= horizonMonths; i++) {
+        const d = new Date(lastDate);
+        d.setUTCMonth(d.getUTCMonth() + i);
+        const mo = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+
+        const stakeMultiplier = Math.pow(1 + projState.stakeGrowth / 100, i);
+        const solProgress = i / horizonMonths;
+        const solAtMonth = currentSol + (targetSol - currentSol) * solProgress;
+        const solMultiplier = solAtMonth / currentSol;
+
+        const monthRev = baseMonthlyRevenue * stakeMultiplier * solMultiplier;
+
+        const monthDz = baseMonthlyDz * stakeMultiplier * solMultiplier * (projState.dzRate / 5);
+
+        const currentEpoch = latestEpochInTimeline();
+        const epochsPerMo = baselines.epochsPerMonth;
+        const monthStartEpoch = currentEpoch + Math.round((i - 1) * epochsPerMo);
+        const monthEndEpoch = currentEpoch + Math.round(i * epochsPerMo);
+        let coverageSum = 0;
+        let epochsInMonth = 0;
+        for (let e = monthStartEpoch; e < monthEndEpoch; e++) {
+          coverageSum += sfdpCoverageAtEpoch(e);
+          epochsInMonth++;
+        }
+        const avgCoverage = epochsInMonth > 0 ? coverageSum / epochsInMonth : 0;
+        const monthVote = projState.voteCostPerMonth * (1 - avgCoverage);
+        const monthExp = projState.monthlyHosting + projState.monthlySoftware + projState.monthlyContractor + monthDz + monthVote;
+
+        const monthNet = monthRev - monthExp;
+        cumProfit += monthNet;
+
+        projectedMonths.push({
+          month: mo,
+          revenue: monthRev,
+          expenses: monthExp,
+          net: monthNet,
+          cumulative: cumProfit,
+          solPrice: solAtMonth,
+        });
+      }
+
+      return { historical: historicalMonthly, histKeys, projected: projectedMonths, baselines };
+    }
+
+    function renderProjectionChart(data) {
+      const histKeys = data.histKeys.slice(-4);
+      const proj = data.projected;
+
+      const labels = [...histKeys, '▸ NOW', ...proj.map(p => p.month)];
+
+      const revData = [];
+      const expData = [];
+
+      for (const k of histKeys) {
+        revData.push(data.historical[k].revenue);
+        expData.push(-data.historical[k].expenses);
+      }
+      revData.push(null); expData.push(null);
+      for (const p of proj) {
+        revData.push(p.revenue);
+        expData.push(-p.expenses);
+      }
+
+      const ctx = document.getElementById('chart-proj-pnl').getContext('2d');
+      if (projPnlChart) projPnlChart.destroy();
+
+      const skipIndex = histKeys.length;
+
+      projPnlChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [
+            {
+              label: 'Revenue',
+              data: revData,
+              backgroundColor: (c) => c.index > skipIndex ? chartGreen + '80' : chartGreen,
+              borderRadius: 0,
+              barPercentage: 0.6,
+            },
+            {
+              label: 'Expenses',
+              data: expData,
+              backgroundColor: (c) => c.index > skipIndex ? chartRed + '80' : chartRed,
+              borderRadius: 0,
+              barPercentage: 0.6,
+            }
+          ]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          layout: { padding: { bottom: 0 } },
+          interaction: { mode: 'index', intersect: false },
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { stacked: true, grid: { display: false } },
+            y: {
+              stacked: true, border: { display: false },
+              ticks: {
+                callback: (val) => {
+                  if (val === 0) return '0';
+                  const abs = Math.abs(val);
+                  if (abs >= 1000) return '$' + (val / 1000).toFixed(0) + 'k';
+                  return '$' + val;
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+
+    function renderProjectionBreakdowns(data) {
+      const baselines = data.baselines;
+      const h = (HORIZONS.find(h => h.id === projState.horizon) || HORIZONS[1]).months;
+      const midIdx = Math.floor(h / 2);
+      const midProj = data.projected[midIdx];
+
+      const stakeM = Math.pow(1 + projState.stakeGrowth / 100, midIdx + 1);
+      const solM = midProj.solPrice / baselines.solPrice;
+
+      // Revenue donut
+      const revDataRaw = { 'Commission': 60, 'Leader Fees': 20, 'MEV Tips': 15, 'BAM': 5 };
+      const revLabels = Object.keys(revDataRaw);
+      const revData = revLabels.map(k => revDataRaw[k] * stakeM * solM);
+
+      if (projRevChart) projRevChart.destroy();
+      projRevChart = new Chart(document.getElementById('chart-proj-rev').getContext('2d'), {
+        type: 'doughnut',
+        data: {
+          labels: revLabels,
+          datasets: [{
+            data: revData,
+            backgroundColor: revLabels.map(k => colorForBreakdownKey(k.toLowerCase().replace(' ', '_'))),
+            borderWidth: 0,
+            hoverOffset: 4
+          }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, cutout: '70%', plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, usePointStyle: true, font: { size: 10, family: 'monospace' } } } } }
+      });
+
+      // Cost donut
+      const expDataRaw = {};
+      if (projState.monthlyHosting > 0) expDataRaw['Hosting'] = projState.monthlyHosting;
+      if (projState.monthlySoftware > 0) expDataRaw['Software'] = projState.monthlySoftware;
+      if (projState.monthlyContractor > 0) expDataRaw['Contractor'] = projState.monthlyContractor;
+      const dzEst = baselines.monthlyDz * stakeM * solM * (projState.dzRate / 5);
+      if (dzEst > 0) expDataRaw['DoubleZero'] = dzEst;
+
+      const currentEpoch = latestEpochInTimeline();
+      const epochsPerMo = baselines.epochsPerMonth;
+      let totalVoteCost = 0;
+      for (let i = 1; i <= h; i++) {
+        const mStartE = currentEpoch + Math.round((i - 1) * epochsPerMo);
+        const mEndE = currentEpoch + Math.round(i * epochsPerMo);
+        let cSum = 0, eCount = 0;
+        for (let e = mStartE; e < mEndE; e++) { cSum += sfdpCoverageAtEpoch(e); eCount++; }
+        const avgCov = eCount > 0 ? cSum / eCount : 0;
+        totalVoteCost += projState.voteCostPerMonth * (1 - avgCov);
+      }
+      const avgVoteCost = totalVoteCost / h;
+      if (avgVoteCost > 1) expDataRaw['Vote Costs'] = avgVoteCost;
+
+      const expKeys = Object.keys(expDataRaw);
+      if (projCostChart) projCostChart.destroy();
+      projCostChart = new Chart(document.getElementById('chart-proj-cost').getContext('2d'), {
+        type: 'doughnut',
+        data: {
+          labels: expKeys,
+          datasets: [{
+            data: expKeys.map(k => expDataRaw[k]),
+            backgroundColor: expKeys.map(k => expenseColorForLabel(k)),
+            borderWidth: 0,
+            hoverOffset: 4
+          }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, cutout: '70%', plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, usePointStyle: true, font: { size: 10, family: 'monospace' } } } } }
+      });
+    }
+
+    function renderProjectionTable(data) {
+      const tbody = document.querySelector('#proj-table tbody');
+      tbody.innerHTML = '';
+      const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+      for (const p of data.projected) {
+        const [yy, mm] = p.month.split('-');
+        const label = `${months[parseInt(mm, 10) - 1]} ${yy}`;
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+        <td>${label}</td>
+        <td class="positive">${formatUsd(p.revenue)}</td>
+        <td class="negative">-${formatUsd(p.expenses)}</td>
+        <td class="${p.net >= 0 ? 'positive' : 'negative'}">${formatUsd(p.net)}</td>
+        <td class="${p.cumulative >= 0 ? 'positive' : 'negative'}">${formatUsd(p.cumulative)}</td>
+      `;
+        tbody.appendChild(tr);
+      }
+
+      document.getElementById('proj-note-horizon').textContent = (HORIZONS.find(h => h.id === projState.horizon) || HORIZONS[1]).label;
+      const finalSol = data.projected[data.projected.length - 1].solPrice;
+      document.getElementById('proj-note-sol').textContent = `${data.baselines.solPrice.toFixed(0)} → $${finalSol.toFixed(0)}`;
+    }
+
+    function computeAndPaintProjections() {
+      const data = computeProjections();
+      renderProjectionChart(data);
+      renderProjectionBreakdowns(data);
+      renderProjectionTable(data);
+
+      let annRev = 0; let annExp = 0;
+      const h = data.projected.length;
+      if (h > 0) {
+        for (const p of data.projected) { annRev += p.revenue; annExp += p.expenses; }
+        annRev = (annRev / h) * 12;
+        annExp = (annExp / h) * 12;
+      }
+      const annNet = annRev - annExp;
+
+      updateHeaderDisplay(annNet, annRev / 12, annExp / 12, false);
+      if (annNet >= 0) expensesLabelEl.textContent = 'Already profitable';
+      else {
+        let beMonths = annExp / (annRev / 12) * 12;
+        expensesLabelEl.textContent = `BE in ~${beMonths.toFixed(1)}mo`;
+      }
+    }
+
+    function buildSliderField(container, label, key, min, max, step, formatFn) {
+      const val = projState[key];
+      const div = document.createElement('div');
+      div.className = 'proj-field';
+      div.innerHTML = `
+      <span style="font-size: 11px;">${label}</span>
+      <div class="proj-field-controls">
+        <input type="range" class="proj-slider" min="${min}" max="${max}" step="${step}" value="${val}">
+        <span style="font-family: monospace; width: 44px; text-align: right; display: inline-block;">${formatFn(val)}</span>
+      </div>
+    `;
+      const inp = div.querySelector('input');
+      const span = div.querySelector('span:last-child');
+      inp.oninput = (e) => {
+        const v = parseFloat(e.target.value);
+        span.textContent = formatFn(v);
+        projState[key] = v;
+        if (key !== 'solDelta' && key !== 'stakeGrowth') projState.scenario = 'custom';
+        saveProjState();
+        computeAndPaintProjections();
+        renderProjectionsUI();
+      };
+      container.appendChild(div);
+    }
+
+    function renderProjectionsUI() {
+      const sBtns = document.getElementById('proj-scenario-btns');
+      sBtns.innerHTML = '';
+      for (const [id, s] of Object.entries(SCENARIOS)) {
+        const btn = document.createElement('button');
+        btn.className = 'proj-scenario-btn' + (projState.scenario === id ? ' active' : '');
+        btn.textContent = s.label;
+        btn.onclick = () => applyScenario(id);
+        sBtns.appendChild(btn);
+      }
+      const btnCust = document.createElement('button');
+      btnCust.className = 'proj-scenario-btn' + (projState.scenario === 'custom' ? ' active' : '');
+      btnCust.textContent = 'Custom';
+      sBtns.appendChild(btnCust);
+    }
+
+    function renderProjections() {
+      const projHorizonBtnsEl = document.getElementById('proj-horizon-btns');
+      projHorizonBtnsEl.innerHTML = '';
+      for (const h of HORIZONS) {
+        const btn = document.createElement('button');
+        btn.className = 'proj-scenario-btn' + (projState.horizon === h.id ? ' active' : '');
+        btn.textContent = h.label;
+        btn.onclick = () => {
+          projState.horizon = h.id;
+          saveProjState();
+          renderProjections();
+        };
+        projHorizonBtnsEl.appendChild(btn);
+      }
+
+      renderProjectionsUI();
+
+      const projRevFieldsEl = document.getElementById('proj-rev-fields');
+      projRevFieldsEl.innerHTML = '';
+      buildSliderField(projRevFieldsEl, 'SOL Price (Δ%)', 'solDelta', -80, 200, 5, v => (v >= 0 ? '+' : '') + v + '%');
+      buildSliderField(projRevFieldsEl, 'Stake Growth/Mo', 'stakeGrowth', 0, 15, 0.5, v => v.toFixed(1) + '%');
+
+      const projCostFieldsEl = document.getElementById('proj-cost-fields');
+      projCostFieldsEl.innerHTML = '';
+      buildSliderField(projCostFieldsEl, 'Hosting $/mo', 'monthlyHosting', 0, 5000, 50, v => '$' + v.toLocaleString());
+      buildSliderField(projCostFieldsEl, 'Software $/mo', 'monthlySoftware', 0, 500, 5, v => '$' + v);
+      buildSliderField(projCostFieldsEl, 'Contractor $/mo', 'monthlyContractor', 0, 500, 5, v => '$' + v);
+      buildSliderField(projCostFieldsEl, 'DZ Fee Rate %', 'dzRate', 0, 15, 0.5, v => v.toFixed(1) + '%');
+      buildSliderField(projCostFieldsEl, 'Vote Cost $/mo', 'voteCostPerMonth', 0, 1000, 10, v => '$' + v);
+
+      const taperEl = document.getElementById('proj-sfdp-taper');
+      if (taperEl) {
+        const curEpoch = latestEpochInTimeline();
+        const currCov = sfdpCoverageAtEpoch(curEpoch);
+        let html = `<div style="font-weight: 600; margin-bottom: 4px;">SFDP Taper (current: ${Math.round(currCov * 100)}% coverage, epoch ${curEpoch})</div>`;
+        html += '<div style="display: flex; gap: 2px; height: 8px; margin-bottom: 6px;">';
+        for (const step of SFDP_TAPER) {
+          const nextStep = SFDP_TAPER[SFDP_TAPER.indexOf(step) + 1];
+          const endEpoch = nextStep ? nextStep.startEpoch - 1 : step.startEpoch + 44;
+          const isCurrent = curEpoch >= step.startEpoch && curEpoch <= endEpoch;
+          const isPast = curEpoch > endEpoch;
+          const opacity = isPast ? 0.3 : 1;
+          const green = Math.round(step.coverage * 180);
+          const red = Math.round((1 - step.coverage) * 180);
+          const bg = `rgba(${red}, ${green}, 80, ${opacity})`;
+          const border = isCurrent ? '2px solid var(--ink, #333)' : 'none';
+          html += `<div style="flex: 1; background: ${bg}; border-radius: 2px; border: ${border};" title="Epochs ${step.startEpoch}–${endEpoch}: ${Math.round(step.coverage * 100)}% coverage"></div>`;
+        }
+        html += '</div>';
+        html += '<div style="display: flex; flex-wrap: wrap; gap: 4px 12px;">';
+        for (const step of SFDP_TAPER) {
+          const nextStep = SFDP_TAPER[SFDP_TAPER.indexOf(step) + 1];
+          const endEpoch = nextStep ? nextStep.startEpoch - 1 : step.startEpoch + 44;
+          const monthsAway = (step.startEpoch - curEpoch) / 15;
+          const isCurrent = curEpoch >= step.startEpoch && curEpoch <= endEpoch;
+          const label = step.coverage === 0 ? 'Expires' : `${Math.round(step.coverage * 100)}%`;
+          const when = monthsAway <= 0 ? (isCurrent ? 'now' : 'past') : `in ~${monthsAway.toFixed(1)}mo`;
+          html += `<span style="opacity: ${isCurrent ? 1 : 0.7};${isCurrent ? ' font-weight: 600;' : ''}">${label} @ e${step.startEpoch} (${when})</span>`;
+        }
+        html += '</div>';
+        taperEl.innerHTML = html;
+      }
+
+      computeAndPaintProjections();
+      projInitDone = true;
+    }
+
+    function initProjections() {
+      // Only called once when projections mode is opened
+    }
 
     // ── Init ────────────────────────────────────────────────────────────────────
     syncStickyOffsets();
