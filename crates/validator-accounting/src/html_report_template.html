@@ -5,9 +5,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Block Parliament · Validator Financials</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     *,
@@ -18,30 +15,70 @@
       padding: 0;
     }
 
+    /* ── bp-web manpage / paper aesthetic ── */
     :root {
-      --bg: #09090b;
-      --surface: rgba(24, 24, 27, 0.6);
-      --border: rgba(63, 63, 70, 0.4);
-      --text: #f4f4f5;
-      --muted: #a1a1aa;
-      --green: #10b981;
-      --red: #ef4444;
-      --neutral: #71717a;
-      --accent: #3b82f6;
+      --paper: #f8f6f1;
+      --ink: #1a1a1a;
+      --ink-light: #666;
+      --link: #0066cc;
+      --rule: #ccc;
+      --green: #227a4b;
+      --red: #b91c1c;
+      --neutral: #888;
       --header-h: 72px;
-      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --paper: #1a1a1a;
+        --ink: #e8e6e1;
+        --ink-light: #999;
+        --link: #6db3f2;
+        --rule: #444;
+        --green: #34d399;
+        --red: #f87171;
+        --neutral: #777;
+      }
     }
 
     body {
-      background: var(--bg);
-      background-image: radial-gradient(circle at 15% 50%, rgba(59, 130, 246, 0.08), transparent 25%),
-        radial-gradient(circle at 85% 30%, rgba(16, 185, 129, 0.08), transparent 25%);
-      background-attachment: fixed;
-      color: var(--text);
-      font-family: var(--font-sans);
+      background-color: var(--paper);
+      color: var(--ink);
+      font-family: monospace;
       font-size: 14px;
-      line-height: 1.5;
+      line-height: 1.6;
       -webkit-font-smoothing: antialiased;
+    }
+
+    a {
+      color: var(--link);
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+
+    a:hover {
+      text-decoration-thickness: 2px;
+    }
+
+    ::selection {
+      background-color: var(--ink);
+      color: var(--paper);
+    }
+
+    @media print {
+      body {
+        background: white;
+        color: black;
+      }
+
+      a {
+        color: black;
+      }
+
+      #header {
+        position: static;
+        backdrop-filter: none;
+      }
     }
 
     /* ── Sticky header ── */
@@ -49,13 +86,18 @@
       position: sticky;
       top: 0;
       z-index: 100;
-      background: rgba(9, 9, 11, 0.8);
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
-      border-bottom: 1px solid var(--border);
+      background-color: var(--paper);
+      border-bottom: 1px dashed var(--rule);
       padding: 12px 20px 10px;
-      /* min-height so tabs never get clipped on narrow viewports */
       min-height: var(--header-h);
+    }
+
+    @supports (backdrop-filter: blur(1px)) {
+      #header {
+        background-color: color-mix(in srgb, var(--paper) 85%, transparent);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+      }
     }
 
     .header-top {
@@ -67,9 +109,9 @@
 
     .header-title {
       font-size: 12px;
-      font-weight: 600;
+      font-weight: bold;
       letter-spacing: 0.08em;
-      color: var(--muted);
+      color: var(--ink-light);
       text-transform: uppercase;
     }
 
@@ -80,19 +122,25 @@
 
     .unit-btn {
       background: none;
-      border: 1px solid var(--border);
-      color: var(--muted);
+      border: 1px dashed var(--rule);
+      color: var(--ink-light);
       padding: 2px 10px;
-      border-radius: 4px;
       cursor: pointer;
+      font-family: monospace;
       font-size: 11px;
       transition: all 0.15s;
     }
 
+    .unit-btn:hover {
+      border-color: var(--ink);
+      color: var(--ink);
+    }
+
     .unit-btn.active {
-      background: var(--accent);
-      border-color: var(--accent);
-      color: #fff;
+      background: var(--ink);
+      border-color: var(--ink);
+      border-style: solid;
+      color: var(--paper);
     }
 
     .stats-row {
@@ -103,25 +151,21 @@
 
     .stat-card {
       flex: 1;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 8px;
+      border: 1px dashed var(--rule);
       padding: 10px 14px;
-      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-      backdrop-filter: blur(8px);
     }
 
     .stat-label {
       font-size: 10px;
       text-transform: uppercase;
       letter-spacing: 0.06em;
-      color: var(--muted);
+      color: var(--ink-light);
       margin-bottom: 2px;
     }
 
     .stat-value {
       font-size: 22px;
-      font-weight: 600;
+      font-weight: bold;
       font-variant-numeric: tabular-nums;
       letter-spacing: -0.02em;
       transition: color 0.2s;
@@ -137,7 +181,7 @@
     }
 
     .stat-value.neutral {
-      color: var(--text);
+      color: var(--ink);
     }
 
     .period-tabs {
@@ -148,44 +192,45 @@
 
     .period-btn {
       background: none;
-      border: 1px solid var(--border);
-      color: var(--muted);
+      border: 1px dashed var(--rule);
+      color: var(--ink-light);
       padding: 2px 12px;
-      border-radius: 4px;
       cursor: pointer;
+      font-family: monospace;
       font-size: 11px;
       transition: all 0.15s;
     }
 
-    /* Hover: accent outline only */
     .period-btn:hover {
-      border-color: var(--accent);
-      color: var(--accent);
+      border-color: var(--ink);
+      color: var(--ink);
     }
 
-    /* Active: filled — visually distinct from hover */
     .period-btn.active {
-      background: var(--accent);
-      border-color: var(--accent);
-      color: #fff;
+      background: var(--ink);
+      border-color: var(--ink);
+      border-style: solid;
+      color: var(--paper);
     }
 
-    /* ── Timeline ── */
+    /* ── Layout ── */
     #content-layout {
-      max-width: 1600px;
+      width: min(100%, 1800px);
       margin: 20px auto 0;
-      padding: 0 20px;
+      padding: 0 clamp(12px, 2vw, 24px);
       display: grid;
-      grid-template-columns: minmax(420px, 48%) minmax(520px, 52%);
-      gap: 20px;
+      grid-template-columns: minmax(460px, 1.05fr) minmax(560px, 1.35fr);
+      gap: clamp(16px, 2vw, 28px);
       align-items: start;
     }
 
+    /* ── Timeline ── */
     #timeline {
       max-width: none;
       margin: 0;
       padding: 0 0 80px;
       min-width: 0;
+      overflow: hidden;
     }
 
     .month-sep {
@@ -198,16 +243,16 @@
 
     .month-sep-line {
       flex: 1;
-      height: 1px;
-      background: var(--border);
+      height: 0;
+      border-top: 1px dashed var(--rule);
     }
 
     .month-sep-label {
       font-size: 11px;
-      font-weight: 600;
+      font-weight: bold;
       letter-spacing: 0.06em;
       text-transform: uppercase;
-      color: var(--muted);
+      color: var(--ink-light);
       white-space: nowrap;
     }
 
@@ -229,27 +274,24 @@
     .event-row {
       display: grid;
       grid-template-columns: 88px 20px 1fr auto auto;
-      /* start-alignment so multi-line labels don't float the date/amount up */
       align-items: start;
       gap: 0 10px;
       padding: 5px 8px;
-      border-radius: 6px;
       transition: background 0.1s;
     }
 
     .event-row:hover {
-      background: var(--surface);
+      background: color-mix(in srgb, var(--ink) 6%, var(--paper));
     }
 
-    /* Row whose cumulative totals are currently shown in the sticky header */
     .row-anchor {
-      background: var(--surface);
-      box-shadow: inset 2px 0 0 var(--accent);
+      background: color-mix(in srgb, var(--ink) 6%, var(--paper));
+      box-shadow: inset 2px 0 0 var(--link);
     }
 
     .ev-date {
       font-size: 12px;
-      color: var(--muted);
+      color: var(--ink-light);
       font-variant-numeric: tabular-nums;
       padding-top: 1px;
     }
@@ -262,55 +304,82 @@
 
     /* Per-category dot colors */
     .ev-dot[data-type="commission"] {
-      color: #f59e0b;
+      color: #b45309;
     }
 
-    /* amber  */
     .ev-dot[data-type="leader_fees"] {
-      color: #60a5fa;
+      color: #2563eb;
     }
 
-    /* sky    */
     .ev-dot[data-type="mev"] {
-      color: #a78bfa;
+      color: #7c3aed;
     }
 
-    /* violet */
     .ev-dot[data-type="bam"] {
-      color: #22d3ee;
+      color: #0891b2;
     }
 
-    /* cyan   */
     .ev-dot[data-type="vote_cost"] {
-      color: #fb923c;
+      color: #c2410c;
     }
 
-    /* orange */
     .ev-dot[data-type="doublezero"] {
-      color: #f43f5e;
+      color: #be123c;
     }
 
-    /* rose   */
     .ev-dot[data-type="expense"] {
-      color: #f87171;
+      color: var(--red);
     }
 
-    /* red    */
     .ev-dot[data-type="seeding"] {
-      color: #34d399;
+      color: var(--green);
     }
 
-    /* emerald*/
     .ev-dot[data-type="withdrawal"] {
-      color: #94a3b8;
+      color: var(--neutral);
     }
 
-    /* slate  */
     .ev-dot[data-type="doublezero_payment"] {
-      color: #818cf8;
+      color: #4f46e5;
     }
 
-    /* indigo */
+    @media (prefers-color-scheme: dark) {
+      .ev-dot[data-type="commission"] {
+        color: #f59e0b;
+      }
+
+      .ev-dot[data-type="leader_fees"] {
+        color: #60a5fa;
+      }
+
+      .ev-dot[data-type="mev"] {
+        color: #a78bfa;
+      }
+
+      .ev-dot[data-type="bam"] {
+        color: #22d3ee;
+      }
+
+      .ev-dot[data-type="vote_cost"] {
+        color: #fb923c;
+      }
+
+      .ev-dot[data-type="doublezero"] {
+        color: #f43f5e;
+      }
+
+      .ev-dot[data-type="seeding"] {
+        color: #34d399;
+      }
+
+      .ev-dot[data-type="withdrawal"] {
+        color: #94a3b8;
+      }
+
+      .ev-dot[data-type="doublezero_payment"] {
+        color: #818cf8;
+      }
+    }
 
     .ev-label {
       min-width: 0;
@@ -325,7 +394,7 @@
 
     .ev-label-sub {
       font-size: 11px;
-      color: var(--muted);
+      color: var(--ink-light);
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -342,7 +411,7 @@
     .ev-usd {
       text-align: right;
       font-size: 13px;
-      font-weight: 600;
+      font-weight: bold;
       font-variant-numeric: tabular-nums;
       white-space: nowrap;
       min-width: 80px;
@@ -378,26 +447,28 @@
       gap: 16px;
     }
 
+    .dashboard-card-main {
+      grid-column: 1 / -1;
+    }
+
     .dashboard-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 12px;
+      border: 1px dashed var(--rule);
       padding: 20px;
-      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-      backdrop-filter: blur(8px);
       display: flex;
       flex-direction: column;
     }
 
     .dashboard-card-title {
-      font-size: 13px;
-      font-weight: 500;
-      color: var(--muted);
+      font-size: 11px;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--ink-light);
       margin-bottom: 16px;
     }
 
     .dashboard-chart-tall {
-      height: 220px;
+      height: clamp(240px, 32vh, 380px);
       position: relative;
     }
 
@@ -407,7 +478,17 @@
       min-height: 180px;
     }
 
-    @media (max-width: 1200px) {
+    /* ── Section headers (ASCII box-drawing) ── */
+    .section-title {
+      font-weight: bold;
+      text-transform: uppercase;
+      font-size: 12px;
+      letter-spacing: 0.06em;
+      color: var(--ink-light);
+      margin-bottom: 12px;
+    }
+
+    @media (max-width: 1280px) {
       #content-layout {
         grid-template-columns: 1fr;
         gap: 14px;
@@ -467,7 +548,7 @@
       }
 
       .dashboard-chart-tall {
-        height: 180px;
+        height: 200px;
       }
 
       .dashboard-chart {
@@ -478,6 +559,18 @@
         padding: 0 0 72px;
       }
     }
+
+    /* ── Reduced motion ── */
+    @media (prefers-reduced-motion: reduce) {
+
+      *,
+      *::before,
+      *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
   </style>
 </head>
 
@@ -485,7 +578,7 @@
 
   <div id="header">
     <div class="header-top">
-      <span class="header-title">Block Parliament · Validator Financials</span>
+      <span class="header-title">&#x2500;&#x2524; Block Parliament · Validator Financials &#x251C;&#x2500;</span>
       <div class="unit-toggle">
         <button class="unit-btn active" id="btn-usd" onclick="setUnit('usd')">USD</button>
         <button class="unit-btn" id="btn-sol" onclick="setUnit('sol')">SOL</button>
@@ -517,19 +610,19 @@
       <div class="dashboard-grid">
         <!-- Main PnL Chart -->
         <div class="dashboard-card dashboard-card-main">
-          <div class="dashboard-card-title">Net Monthly Performance</div>
+          <div class="dashboard-card-title">&#x2500;&#x2524; Net Monthly Performance &#x251C;&#x2500;</div>
           <div class="dashboard-chart-tall"><canvas id="chart-pnl"></canvas></div>
         </div>
 
         <!-- Revenue Breakdown -->
         <div class="dashboard-card">
-          <div class="dashboard-card-title">Income Breakdown</div>
+          <div class="dashboard-card-title">&#x2500;&#x2524; Income Breakdown &#x251C;&#x2500;</div>
           <div class="dashboard-chart"><canvas id="chart-income"></canvas></div>
         </div>
 
         <!-- Expense Breakdown -->
         <div class="dashboard-card">
-          <div class="dashboard-card-title">Expense Breakdown (by line item)</div>
+          <div class="dashboard-card-title">&#x2500;&#x2524; Expense Breakdown &#x251C;&#x2500;</div>
           <div class="dashboard-chart"><canvas id="chart-expenses"></canvas></div>
         </div>
       </div>
@@ -542,31 +635,42 @@
     const TIMELINE = __TIMELINE_JSON__;
 
     // ── Cached DOM refs ──────────────────────────────────────────────────────────
-    // Queried once at startup — these elements never move.
     const profitEl = document.getElementById('stat-profit');
     const revenueEl = document.getElementById('stat-revenue');
     const expensesEl = document.getElementById('stat-expenses');
 
+    // ── Detect dark mode for Chart.js theming ────────────────────────────────────
+    const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const chartInk = isDark ? '#e8e6e1' : '#1a1a1a';
+    const chartInkLight = isDark ? '#999' : '#666';
+    const chartRule = isDark ? '#444' : '#ccc';
+    const chartPaper = isDark ? '#1a1a1a' : '#f8f6f1';
+    const chartGreen = isDark ? '#34d399' : '#227a4b';
+    const chartRed = isDark ? '#f87171' : '#b91c1c';
+
     // ── Chart.js Global Config ───────────────────────────────────────────────────
-    Chart.defaults.color = '#a1a1aa';
-    Chart.defaults.font.family = "'Inter', sans-serif";
-    Chart.defaults.scale.grid.color = 'rgba(63, 63, 70, 0.4)';
-    Chart.defaults.plugins.tooltip.backgroundColor = 'rgba(24, 24, 27, 0.9)';
-    Chart.defaults.plugins.tooltip.titleColor = '#f4f4f5';
-    Chart.defaults.plugins.tooltip.bodyColor = '#a1a1aa';
+    Chart.defaults.color = chartInkLight;
+    Chart.defaults.font.family = 'monospace';
+    Chart.defaults.font.size = 11;
+    Chart.defaults.scale.grid.color = chartRule;
+    Chart.defaults.plugins.tooltip.backgroundColor = chartInk;
+    Chart.defaults.plugins.tooltip.titleColor = chartPaper;
+    Chart.defaults.plugins.tooltip.bodyColor = isDark ? '#ccc' : '#888';
     Chart.defaults.plugins.tooltip.padding = 10;
-    Chart.defaults.plugins.tooltip.cornerRadius = 8;
+    Chart.defaults.plugins.tooltip.cornerRadius = 0;
     Chart.defaults.plugins.tooltip.displayColors = true;
+    Chart.defaults.plugins.tooltip.borderColor = chartRule;
+    Chart.defaults.plugins.tooltip.borderWidth = 1;
 
     const chartColors = {
-      commission: '#f59e0b',
-      leader_fees: '#60a5fa',
-      mev: '#a78bfa',
-      bam: '#22d3ee',
-      vote_cost: '#fb923c', // expenses are negative in data, we absolute them
-      expense: '#ef4444',
-      doublezero: '#f43f5e',
-      other: '#52525b'
+      commission: isDark ? '#f59e0b' : '#b45309',
+      leader_fees: isDark ? '#60a5fa' : '#2563eb',
+      mev: isDark ? '#a78bfa' : '#7c3aed',
+      bam: isDark ? '#22d3ee' : '#0891b2',
+      vote_cost: isDark ? '#fb923c' : '#c2410c',
+      expense: chartRed,
+      doublezero: isDark ? '#f43f5e' : '#be123c',
+      other: isDark ? '#52525b' : '#888'
     };
 
     const typeLabels = {
@@ -582,7 +686,10 @@
     let pnlChartInstance = null;
     let incomeChartInstance = null;
     let expenseChartInstance = null;
-    const breakdownPalette = ['#fb923c', '#f43f5e', '#ef4444', '#eab308', '#14b8a6', '#22c55e', '#60a5fa', '#a78bfa'];
+    let currentRenderedEvents = TIMELINE;
+    const breakdownPalette = isDark
+      ? ['#fb923c', '#f43f5e', '#ef4444', '#eab308', '#14b8a6', '#22c55e', '#60a5fa', '#a78bfa']
+      : ['#c2410c', '#be123c', '#b91c1c', '#a16207', '#0d9488', '#15803d', '#2563eb', '#7c3aed'];
 
     function currentSolPrice() {
       const sp = solPrice();
@@ -596,6 +703,14 @@
     function eventValueInUnit(ev) {
       if (currentUnit === 'usd') return ev.amount_usd;
       return ev.amount_sol !== 0 ? ev.amount_sol : usdToSol(ev.amount_usd);
+    }
+
+    function eventSolValue(usd, sol) {
+      return sol !== 0 ? sol : usdToSol(usd);
+    }
+
+    function formatEventValueForUnit(usd, sol, unit) {
+      return unit === 'usd' ? formatUsd(usd) : formatSol(eventSolValue(usd, sol));
     }
 
     function monthStartKey(dateStr) {
@@ -725,7 +840,7 @@
       const labels = monthStarts;
 
       const revData = sortedMonths.map(m => monthlyData[m].revenue);
-      const expData = sortedMonths.map(m => -monthlyData[m].expenses); // negative for chart
+      const expData = sortedMonths.map(m => -monthlyData[m].expenses);
 
       // --- PnL Bar Chart ---
       const pnlCtx = document.getElementById('chart-pnl').getContext('2d');
@@ -739,15 +854,15 @@
             {
               label: 'Revenue',
               data: revData,
-              backgroundColor: '#10b981',
-              borderRadius: 4,
+              backgroundColor: chartGreen,
+              borderRadius: 0,
               barPercentage: 0.6,
             },
             {
               label: 'Expenses',
               data: expData,
-              backgroundColor: '#ef4444',
-              borderRadius: 4,
+              backgroundColor: chartRed,
+              borderRadius: 0,
               barPercentage: 0.6,
             }
           ]
@@ -755,6 +870,7 @@
         options: {
           responsive: true,
           maintainAspectRatio: false,
+          layout: { padding: { left: 8, right: 8, top: 4, bottom: 0 } },
           interaction: { mode: 'index', intersect: false },
           plugins: {
             legend: { display: false },
@@ -774,11 +890,16 @@
             }
           },
           scales: {
-            x: { stacked: true, grid: { display: false } },
+            x: {
+              stacked: true,
+              grid: { display: false },
+              ticks: { autoSkip: true, maxRotation: 0, minRotation: 0 }
+            },
             y: {
               stacked: true,
               border: { display: false },
               ticks: {
+                padding: 6,
                 callback: function (val) {
                   if (val === 0) return '0';
                   const abs = Math.abs(val);
@@ -800,7 +921,7 @@
       const donutOptions = {
         responsive: true, maintainAspectRatio: false, cutout: '70%',
         plugins: {
-          legend: { position: 'bottom', labels: { boxWidth: 10, usePointStyle: true, font: { size: 11 } } },
+          legend: { position: 'bottom', labels: { boxWidth: 10, usePointStyle: true, font: { size: 10, family: 'monospace' } } },
           tooltip: {
             callbacks: {
               label: function (ctx) {
@@ -873,7 +994,6 @@
 
     function setUnit(unit) {
       if (unit === currentUnit) return;
-      // Cancel any in-flight animation so the snap is clean
       if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
 
       currentUnit = unit;
@@ -881,22 +1001,24 @@
       document.getElementById('btn-sol').classList.toggle('active', unit === 'sol');
 
       document.querySelectorAll('.ev-sol').forEach(el => {
+        const usd = parseFloat(el.dataset.usd || '0');
+        const sol = parseFloat(el.dataset.sol || '0');
+        el.textContent = formatSol(eventSolValue(usd, sol));
         el.style.display = unit === 'sol' ? '' : 'none';
       });
       document.querySelectorAll('.ev-usd').forEach(el => {
-        el.textContent = unit === 'usd'
-          ? formatUsd(parseFloat(el.dataset.usd))
-          : formatSol(parseFloat(el.dataset.sol));
+        const usd = parseFloat(el.dataset.usd || '0');
+        const sol = parseFloat(el.dataset.sol || '0');
+        el.textContent = formatEventValueForUnit(usd, sol, unit);
       });
 
-      // Update month separator nets
       document.querySelectorAll('.month-sep-net').forEach(el => {
         const netUsd = parseFloat(el.dataset.netUsd);
         el.textContent = (unit === 'usd' ? formatUsd(netUsd) : formatSol(usdToSol(netUsd))) + ' net';
         el.className = 'month-sep-net ' + (netUsd >= 0 ? 'positive' : 'negative');
       });
 
-      // Snap header to current target in the new unit
+      renderDashboard(currentRenderedEvents);
       updateHeaderDisplay(targetProfit, targetRevenue, targetExpenses, true);
     }
 
@@ -922,8 +1044,6 @@
     }
 
     // ── Recent SOL price estimate ────────────────────────────────────────────────
-    // Sample the most-recent entries with a non-zero SOL amount and take the
-    // median implied price. This is only used for the header SOL display.
     function solPrice() {
       const candidates = [];
       for (let i = TIMELINE.length - 1; i >= 0 && candidates.length < 20; i--) {
@@ -933,7 +1053,7 @@
           if (p > 1) candidates.push(p);
         }
       }
-      if (!candidates.length) return 150; // reasonable fallback
+      if (!candidates.length) return 150;
       candidates.sort((a, b) => a - b);
       return candidates[Math.floor(candidates.length / 2)];
     }
@@ -968,11 +1088,10 @@
         ? TIMELINE
         : TIMELINE.filter(e => e.date.startsWith(yearFilter));
 
-      renderDashboard(filteredEvents);
+      currentRenderedEvents = filteredEvents;
+      renderDashboard(currentRenderedEvents);
       buildTabs(yearFilter);
 
-      // Scroll to top so the header reflects the beginning of the filtered period.
-      // (Skip on initial load — we'll scroll to the bottom instead.)
       if (!scrollToBottom) window.scrollTo(0, 0);
 
       const events = yearFilter === 'all'
@@ -985,15 +1104,13 @@
 
       if (events.length === 0) {
         const msg = document.createElement('div');
-        msg.style.cssText = 'text-align:center;color:var(--muted);padding:60px 0;font-size:14px';
+        msg.style.cssText = 'text-align:center;color:var(--ink-light);padding:60px 0;font-size:14px';
         msg.textContent = 'No events found for the selected period.';
         container.appendChild(msg);
-        // Reset header so it doesn't show a previous period's totals
         setHeaderInstant(0, 0, 0);
         return;
       }
 
-      // Group by month (events are oldest-first)
       const byMonth = new Map();
       for (const ev of events) {
         const mo = ev.date.slice(0, 7);
@@ -1010,11 +1127,6 @@
         }
       }
 
-      // Recompute period-relative running totals from the filtered event set.
-      // The Rust-precomputed cumulative_* fields are all-time totals; reading them
-      // directly in a year-filtered view would show e.g. 3 years of revenue in
-      // the "2025" tab. Instead we walk the filtered events and overwrite each
-      // row's dataset with period-local sums.
       let pProfit = 0, pRevenue = 0, pExpenses = 0;
       for (let i = 0; i < events.length; i++) {
         const ev = events[i];
@@ -1023,13 +1135,11 @@
           else pExpenses += Math.abs(ev.amount_usd);
           pProfit += ev.amount_usd;
         }
-        // allRows[i] maps 1-to-1 with events[i] (separators are not in allRows)
         allRows[i].dataset.profit = pProfit.toFixed(2);
         allRows[i].dataset.revenue = pRevenue.toFixed(2);
         allRows[i].dataset.expenses = pExpenses.toFixed(2);
       }
 
-      // Seed header with the period's final totals (read from the recomputed last row)
       const lastRow = allRows[allRows.length - 1];
       const seedP = parseFloat(lastRow.dataset.profit);
       const seedR = parseFloat(lastRow.dataset.revenue);
@@ -1039,7 +1149,6 @@
       targetRevenue = seedR;
       targetExpenses = seedE;
 
-      // Mark the last row as the initial anchor (header reflects totals through it).
       anchorIdx = null;
       setAnchor(allRows.length - 1);
     }
@@ -1068,7 +1177,6 @@
 
       const netEl = document.createElement('span');
       netEl.className = 'month-sep-net ' + (netUsd >= 0 ? 'positive' : 'negative');
-      // Store USD net so setUnit() can reformat it without re-iterating events
       netEl.dataset.netUsd = netUsd;
       netEl.textContent = (currentUnit === 'usd' ? formatUsd(netUsd) : formatSol(usdToSol(netUsd))) + ' net';
 
@@ -1089,8 +1197,6 @@
 
     function dotGlyph(ev) {
       if (!ev.is_pnl) return '○';
-      // Use ● for both income and expense — CSS color distinguishes them (green/red).
-      // ◌ is reserved for genuine zero-amount P&L events (e.g. fully-SFDP vote costs).
       if (ev.amount_usd === 0) return '◌';
       return '●';
     }
@@ -1126,15 +1232,16 @@
 
       const solEl = document.createElement('span');
       solEl.className = 'ev-sol';
+      solEl.dataset.usd = ev.amount_usd;
       solEl.dataset.sol = ev.amount_sol;
-      solEl.textContent = formatSol(ev.amount_sol);
+      solEl.textContent = formatSol(eventSolValue(ev.amount_usd, ev.amount_sol));
       solEl.style.display = currentUnit === 'sol' ? '' : 'none';
 
       const usdEl = document.createElement('span');
       usdEl.className = 'ev-usd';
       usdEl.dataset.sol = ev.amount_sol;
       usdEl.dataset.usd = ev.amount_usd;
-      usdEl.textContent = formatAmount(ev.amount_usd, ev.amount_sol);
+      usdEl.textContent = formatEventValueForUnit(ev.amount_usd, ev.amount_sol, currentUnit);
 
       div.appendChild(dateEl);
       div.appendChild(dotEl);
@@ -1153,9 +1260,6 @@
     let displayExpenses = 0;
     let rafId = null;
 
-    // Find the last (newest, bottommost) row still visible in the viewport.
-    // For a chronological (oldest→newest) timeline this gives the most recent event
-    // currently in view, so the header totals build up as you scroll forward.
     function findBottomRow() {
       const viewBottom = window.innerHeight;
       let lo = 0, hi = allRows.length - 1, found = null;
@@ -1215,7 +1319,7 @@
 
       profitEl.className = 'stat-value ' + (displayProfit >= 0 ? 'positive' : 'negative');
       revenueEl.className = 'stat-value positive';
-      expensesEl.className = 'stat-value negative'; // expenses are a cost — red is standard
+      expensesEl.className = 'stat-value negative';
     }
 
     function setHeaderInstant(profit, revenue, expenses) {
@@ -1224,7 +1328,7 @@
       paintHeader();
     }
 
-    // ── Scroll handler (rAF-gated to avoid forced layout on the scroll thread) ───
+    // ── Scroll handler ───────────────────────────────────────────────────────────
     let scrollTicking = false;
     let anchorIdx = null;
 
