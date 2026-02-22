@@ -1,4 +1,5 @@
 User-agent: *
 Allow: /
+Disallow: /financials
 
 Sitemap: https://blockparliament.com/sitemap.xml

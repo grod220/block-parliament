@@ -594,6 +594,7 @@ name = "bp-web"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64 0.22.1",
  "futures",
  "http 1.4.0",
  "leptos",

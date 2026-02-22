@@ -80,6 +80,9 @@ toml = "0.9.11"
 # SQLite with compile-time checked queries
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite"] }
 
+# Base64 encoding/decoding
+base64 = "0.22"
+
 # Server release optimization
 [profile.release]
 opt-level = 3

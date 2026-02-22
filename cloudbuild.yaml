@@ -1,11 +1,15 @@
 steps:
-  # Build the Docker image
+  # Build the Docker image with BuildKit enabled for secret mounting
   - name: 'gcr.io/cloud-builders/docker'
+    env:
+      - 'DOCKER_BUILDKIT=1'
     args:
       - 'build'
+      - '--secret=id=va_config,env=VALIDATOR_ACCOUNTING_CONFIG'
       - '-t'
       - '${_IMAGE}'
       - '.'
+    secretEnv: ['VALIDATOR_ACCOUNTING_CONFIG']
 
   # Push to Artifact Registry
   - name: 'gcr.io/cloud-builders/docker'
@@ -13,7 +17,7 @@ steps:
       - 'push'
       - '${_IMAGE}'
 
-  # Deploy to Cloud Run
+  # Deploy to Cloud Run, injecting the financials password from Secret Manager
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
@@ -27,7 +31,13 @@ steps:
       - '--platform'
       - 'managed'
       - '--allow-unauthenticated'
+      - '--set-secrets=FINANCIALS_PASSWORD=financials-password:latest'
       - '--quiet'
+
+availableSecrets:
+  secretManager:
+    - versionName: projects/${PROJECT_ID}/secrets/validator-accounting-config/versions/latest
+      env: 'VALIDATOR_ACCOUNTING_CONFIG'
 
 substitutions:
   _REGION: us-central1

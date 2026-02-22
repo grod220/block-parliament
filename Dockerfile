@@ -28,8 +28,13 @@ RUN npx @tailwindcss/cli --input style/tailwind.css --output /app/target/site/pk
 # Copy static assets from public folder (fail fast if missing)
 RUN cp -r public/* /app/target/site/
 
-# Build the Rust binary
+# Generate financial report (config.toml mounted as BuildKit secret — never in image layers)
 WORKDIR /app
+RUN mkdir -p output
+RUN --mount=type=secret,id=va_config,dst=/app/crates/validator-accounting/config.toml \
+    cargo run -p validator-accounting --release
+
+# Build bp-web (must happen after report generation — include_str! embeds report.html)
 RUN cargo build -p bp-web --features ssr --release
 
 # Runtime stage
