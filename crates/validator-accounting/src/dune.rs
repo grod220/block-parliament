@@ -120,17 +120,23 @@ impl DuneClient {
             performance: "large".to_string(),
         };
 
-        let response: ExecuteResponse = self
+        let resp = self
             .client
             .post(&execute_url)
             .header("X-Dune-Api-Key", &self.api_key)
             .json(&request)
             .send()
             .await
-            .context("Failed to submit Dune query")?
-            .json()
-            .await
-            .context("Failed to parse Dune execute response")?;
+            .context("Failed to submit Dune query")?;
+
+        let status = resp.status();
+        let body = resp.text().await.context("Failed to read Dune response body")?;
+
+        if !status.is_success() {
+            anyhow::bail!("Dune API returned {}: {}", status, body);
+        }
+
+        let response: ExecuteResponse = serde_json::from_str(&body).context("Failed to parse Dune execute response")?;
 
         let execution_id = response.execution_id;
         println!("    Query submitted (execution_id: {})", execution_id);
@@ -533,6 +539,80 @@ impl DuneClient {
         } else {
             let label = get_label(pubkey);
             (label.name, label.category)
+        }
+    }
+}
+
+// =============================================================================
+// Standalone SQL Executor (no DuneClient / validator config needed)
+// =============================================================================
+
+/// Execute a Dune SQL query using just an API key.
+/// Used by modules that don't need the full DuneClient (e.g. price fetching).
+pub async fn execute_sql(api_key: &str, sql: &str) -> Result<Vec<HashMap<String, serde_json::Value>>> {
+    let client = reqwest::Client::new();
+
+    // Submit query
+    let execute_url = format!("{}/sql/execute", DUNE_API_BASE);
+    let request = ExecuteRequest {
+        sql: sql.to_string(),
+        performance: "large".to_string(),
+    };
+
+    let response = client
+        .post(&execute_url)
+        .header("X-Dune-Api-Key", api_key)
+        .json(&request)
+        .send()
+        .await
+        .context("Failed to submit Dune query")?;
+
+    let status = response.status();
+    let body = response.text().await.context("Failed to read Dune response body")?;
+
+    if !status.is_success() {
+        anyhow::bail!("Dune API returned {}: {}", status, body);
+    }
+
+    let exec: ExecuteResponse = serde_json::from_str(&body).context("Failed to parse Dune execute response")?;
+
+    // Wait for initial processing
+    sleep(Duration::from_secs(INITIAL_DELAY_SECS)).await;
+
+    // Poll for results
+    let results_url = format!("{}/execution/{}/results", DUNE_API_BASE, exec.execution_id);
+    let timeout = Duration::from_secs(QUERY_TIMEOUT_SECS);
+    let start = std::time::Instant::now();
+
+    loop {
+        if start.elapsed() > timeout {
+            anyhow::bail!("Query timed out after {} seconds", QUERY_TIMEOUT_SECS);
+        }
+
+        let response: ResultsResponse = client
+            .get(&results_url)
+            .header("X-Dune-Api-Key", api_key)
+            .send()
+            .await
+            .context("Failed to get Dune results")?
+            .json()
+            .await
+            .context("Failed to parse Dune results response")?;
+
+        match response.state.as_str() {
+            "QUERY_STATE_COMPLETED" => {
+                if let Some(result) = response.result {
+                    return Ok(result.rows);
+                }
+                return Ok(Vec::new());
+            }
+            "QUERY_STATE_FAILED" => {
+                let error = response.error.unwrap_or_else(|| "Unknown error".to_string());
+                anyhow::bail!("Query failed: {}", error);
+            }
+            _ => {
+                sleep(Duration::from_secs(POLL_INTERVAL_SECS)).await;
+            }
         }
     }
 }

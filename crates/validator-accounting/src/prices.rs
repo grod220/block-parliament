@@ -1,4 +1,4 @@
-//! Historical SOL/USD price fetching (CoinGecko → Binance → hardcoded fallback)
+//! Historical SOL/USD price fetching (CoinGecko → Binance → Dune → hardcoded fallback)
 
 use anyhow::Result;
 use chrono::{Duration as ChronoDuration, NaiveDate, Utc};
@@ -8,6 +8,7 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 use crate::constants;
+use crate::dune;
 use crate::transactions::{EpochReward, SolTransfer};
 
 /// Price cache mapping date strings to USD prices
@@ -36,8 +37,9 @@ pub async fn fetch_historical_prices(
     rewards: &[EpochReward],
     transfers: &[SolTransfer],
     api_key: &str,
+    dune_api_key: Option<&str>,
 ) -> Result<PriceCache> {
-    fetch_historical_prices_with_cache(rewards, transfers, api_key, None).await
+    fetch_historical_prices_with_cache(rewards, transfers, api_key, dune_api_key, None).await
 }
 
 /// Fetch historical prices, skipping dates already in `existing_prices`.
@@ -45,6 +47,7 @@ pub async fn fetch_historical_prices_with_cache(
     rewards: &[EpochReward],
     transfers: &[SolTransfer],
     api_key: &str,
+    dune_api_key: Option<&str>,
     existing_prices: Option<&PriceCache>,
 ) -> Result<PriceCache> {
     let mut cache = PriceCache::new();
@@ -95,7 +98,7 @@ pub async fn fetch_historical_prices_with_cache(
     // Fetch historical prices from CoinGecko
     println!("    Fetching prices from {} to {}", min_date, max_date);
 
-    match fetch_price_range(*min_date, *max_date, api_key).await {
+    match fetch_price_range(*min_date, *max_date, api_key, dune_api_key).await {
         Ok(prices) => {
             for (date, price) in prices {
                 cache.insert(date, price);
@@ -125,15 +128,38 @@ pub async fn fetch_historical_prices_with_cache(
     Ok(cache)
 }
 
-/// Fetch price range — tries CoinGecko first, falls back to Binance
-async fn fetch_price_range(from: NaiveDate, to: NaiveDate, api_key: &str) -> Result<Vec<(String, f64)>> {
+/// Fetch price range — tries CoinGecko → Binance → Dune → fallback
+async fn fetch_price_range(
+    from: NaiveDate,
+    to: NaiveDate,
+    api_key: &str,
+    dune_api_key: Option<&str>,
+) -> Result<Vec<(String, f64)>> {
     match fetch_price_range_coingecko(from, to, api_key).await {
-        Ok(prices) => Ok(prices),
+        Ok(prices) => return Ok(prices),
         Err(cg_err) => {
             eprintln!("    ⚠️  CoinGecko failed ({}), trying Binance...", cg_err);
-            fetch_price_range_binance(from, to).await
         }
     }
+
+    match fetch_price_range_binance(from, to).await {
+        Ok(prices) => return Ok(prices),
+        Err(bn_err) => {
+            eprintln!("    ⚠️  Binance failed ({})", bn_err);
+        }
+    }
+
+    if let Some(dune_key) = dune_api_key {
+        eprintln!("    ⚠️  Trying Dune prices.usd...");
+        match fetch_price_range_dune(from, to, dune_key).await {
+            Ok(prices) => return Ok(prices),
+            Err(dune_err) => {
+                eprintln!("    ⚠️  Dune price fetch failed ({})", dune_err);
+            }
+        }
+    }
+
+    anyhow::bail!("All price sources failed (CoinGecko, Binance, Dune)")
 }
 
 /// Fetch price range from CoinGecko
@@ -283,6 +309,48 @@ async fn fetch_price_range_binance(from: NaiveDate, to: NaiveDate) -> Result<Vec
 
     println!("    ✓ Binance fallback: fetched {} daily prices", all_prices.len());
     Ok(all_prices)
+}
+
+/// Fetch price range from Dune `prices.usd` table (works from cloud IPs).
+/// Queries daily average SOL/USD prices for the given date range.
+async fn fetch_price_range_dune(from: NaiveDate, to: NaiveDate, dune_api_key: &str) -> Result<Vec<(String, f64)>> {
+    let sql = format!(
+        r#"
+        SELECT
+          DATE(minute) as price_date,
+          AVG(price) as avg_price
+        FROM prices.usd
+        WHERE blockchain = 'solana'
+          AND symbol = 'SOL'
+          AND minute >= TIMESTAMP '{from} 00:00:00'
+          AND minute < TIMESTAMP '{to_next} 00:00:00'
+        GROUP BY DATE(minute)
+        ORDER BY price_date
+        "#,
+        from = from.format("%Y-%m-%d"),
+        to_next = (to + ChronoDuration::days(1)).format("%Y-%m-%d"),
+    );
+
+    let rows = dune::execute_sql(dune_api_key, &sql).await?;
+
+    let mut prices: Vec<(String, f64)> = Vec::new();
+    for row in &rows {
+        let date = row.get("price_date").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let price = row.get("avg_price").and_then(|v| v.as_f64());
+
+        if let (Some(d), Some(p)) = (date, price) {
+            // Dune may return full timestamps; normalize to YYYY-MM-DD
+            let date_str = if d.len() > 10 { d[..10].to_string() } else { d };
+            prices.push((date_str, p));
+        }
+    }
+
+    if prices.is_empty() {
+        anyhow::bail!("Dune returned no price data");
+    }
+
+    println!("    ✓ Dune fallback: fetched {} daily prices", prices.len());
+    Ok(prices)
 }
 
 /// Fetch current SOL price — tries CoinGecko first, falls back to Binance

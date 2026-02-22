@@ -1844,7 +1844,15 @@ async fn handle_tax_command(
         dune_api_key,
     )
     .await?;
-    let price_cache = fetch_prices_with_cache(cache, &rewards, &transfers, &config.coingecko_api_key, no_cache).await?;
+    let price_cache = fetch_prices_with_cache(
+        cache,
+        &rewards,
+        &transfers,
+        &config.coingecko_api_key,
+        dune_api_key,
+        no_cache,
+    )
+    .await?;
     println!("  {} daily prices cached\n", price_cache.len());
 
     // Create output dir and generate report
@@ -2860,8 +2868,15 @@ async fn run_report_generation(args: Args, cache: Cache) -> Result<()> {
 
     // Step 8: Fetch historical prices (with caching)
     println!("Fetching historical SOL prices...");
-    let price_cache =
-        fetch_prices_with_cache(&cache, &rewards, &transfers, &config.coingecko_api_key, args.no_cache).await?;
+    let price_cache = fetch_prices_with_cache(
+        &cache,
+        &rewards,
+        &transfers,
+        &config.coingecko_api_key,
+        dune_api_key,
+        args.no_cache,
+    )
+    .await?;
     println!("  Cached {} daily prices\n", price_cache.len());
 
     // Step 9: Generate reports
@@ -3321,10 +3336,11 @@ async fn fetch_prices_with_cache(
     rewards: &[transactions::EpochReward],
     transfers: &[transactions::SolTransfer],
     api_key: &str,
+    dune_api_key: Option<&str>,
     no_cache: bool,
 ) -> Result<prices::PriceCache> {
     if no_cache {
-        let prices = prices::fetch_historical_prices(rewards, transfers, api_key).await?;
+        let prices = prices::fetch_historical_prices(rewards, transfers, api_key, dune_api_key).await?;
         cache.store_prices(&prices).await?;
         return Ok(prices);
     }
@@ -3335,7 +3351,8 @@ async fn fetch_prices_with_cache(
 
     // Fetch only missing prices (skips dates already in cache)
     let new_prices =
-        prices::fetch_historical_prices_with_cache(rewards, transfers, api_key, Some(&price_cache)).await?;
+        prices::fetch_historical_prices_with_cache(rewards, transfers, api_key, dune_api_key, Some(&price_cache))
+            .await?;
 
     // Merge new prices into cache
     let new_count = new_prices.len();
@@ -3457,26 +3474,22 @@ async fn fetch_transfers_with_cache(
         }
     }
 
-    // Fall back to Dune if RPC failed or our history was truncated by a signature cap.
-    // Dune transfer queries are already filtered to transfers and include vote/identity, so they
-    // can backfill missing history without scanning high-volume vote tx signatures.
-    let needs_dune = rpc_failed || all_transfers.is_empty() || hit_signature_cap;
-    if needs_dune && dune_api_key.is_none() {
-        eprintln!("    ⚠️  Warning: RPC transfer history may be incomplete (no Dune API key for fallback).");
+    // Always supplement with Dune when available. RPC only scans withdraw_authority and
+    // personal_wallet; Dune covers all 4 accounts (identity, vote, withdraw_authority, personal)
+    // and catches SFDP→vote_account, Jito→identity, and other transfers RPC can't see.
+    if dune_api_key.is_none() {
+        eprintln!("    ⚠️  Warning: RPC transfer history may be incomplete (no Dune API key).");
         eprintln!(
             "    ⚠️  Some transfers (e.g. SFDP→vote account) may be missing. Configure a Dune API key for full coverage."
         );
     }
-    if needs_dune
-        && dune_api_key.is_some()
-        && let Some(api_key) = dune_api_key
-    {
-        println!("    Falling back to Dune for transfer history...");
+    if let Some(api_key) = dune_api_key {
+        println!("    Supplementing with Dune transfer history...");
 
         let dune_client = dune::DuneClient::new(api_key.to_string(), config);
-        // If we hit the signature cap, we likely missed *older* history, so don't apply a min_slot.
-        // Otherwise, use the newest cached slot as a lower bound to fetch only new transfers.
-        let min_slot = if hit_signature_cap || all_transfers.is_empty() {
+        // Use the newest cached slot as a lower bound to fetch only new/missing transfers.
+        // If RPC found nothing or hit a cap, do a full scan (no min_slot).
+        let min_slot = if all_transfers.is_empty() || hit_signature_cap {
             None
         } else {
             all_transfers.iter().map(|t| t.slot).max().map(|s| s.saturating_add(1))
