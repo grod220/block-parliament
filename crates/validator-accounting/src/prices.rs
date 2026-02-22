@@ -50,19 +50,16 @@ pub async fn fetch_historical_prices_with_cache(
     let mut cache = PriceCache::new();
 
     // Collect all unique dates we need prices for
-    let mut dates: Vec<NaiveDate> = Vec::new();
+    let mut date_set = std::collections::HashSet::<NaiveDate>::new();
 
     for reward in rewards {
         if let Some(date) = &reward.date
             && let Ok(d) = NaiveDate::parse_from_str(date, "%Y-%m-%d")
         {
-            // Skip if already in existing cache
             if existing_prices.is_some_and(|p| p.contains_key(date)) {
                 continue;
             }
-            if !dates.contains(&d) {
-                dates.push(d);
-            }
+            date_set.insert(d);
         }
     }
 
@@ -70,15 +67,14 @@ pub async fn fetch_historical_prices_with_cache(
         if let Some(date) = &transfer.date
             && let Ok(d) = NaiveDate::parse_from_str(date, "%Y-%m-%d")
         {
-            // Skip if already in existing cache
             if existing_prices.is_some_and(|p| p.contains_key(date)) {
                 continue;
             }
-            if !dates.contains(&d) {
-                dates.push(d);
-            }
+            date_set.insert(d);
         }
     }
+
+    let mut dates: Vec<NaiveDate> = date_set.into_iter().collect();
 
     if dates.is_empty() {
         // No dates to fetch, get current price if not cached

@@ -180,7 +180,14 @@ fn parse_page_to_entry(page: &PageResult) -> Option<HoursLogEntry> {
     let amount_usd = match &page.properties.amount_earned.formula {
         FormulaValue::String { string: Some(s) } => {
             // Parse "$45.00" format
-            s.trim_start_matches('$').replace(',', "").parse::<f64>().unwrap_or(0.0)
+            let cleaned = s.trim_start_matches('$').replace(',', "");
+            match cleaned.parse::<f64>() {
+                Ok(v) => v,
+                Err(_) => {
+                    eprintln!("    Warning: could not parse Notion amount '{}' — treating as $0.00", s);
+                    0.0
+                }
+            }
         }
         FormulaValue::Number { number: Some(n) } => *n,
         _ => 0.0,
