@@ -26,8 +26,8 @@ use crate::vote_costs::EpochVoteCost;
 /// Dune API base URL
 const DUNE_API_BASE: &str = "https://api.dune.com/api/v1";
 
-/// Timeout for query execution (5 minutes)
-const QUERY_TIMEOUT_SECS: u64 = 300;
+/// Timeout for query execution (10 minutes — transfer queries can be slow)
+const QUERY_TIMEOUT_SECS: u64 = 600;
 
 /// Poll interval for checking query status
 const POLL_INTERVAL_SECS: u64 = 3;
@@ -117,7 +117,7 @@ impl DuneClient {
         let execute_url = format!("{}/sql/execute", DUNE_API_BASE);
         let request = ExecuteRequest {
             sql: sql.to_string(),
-            performance: "medium".to_string(),
+            performance: "large".to_string(),
         };
 
         let response: ExecuteResponse = self

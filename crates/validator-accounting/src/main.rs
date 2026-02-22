@@ -3458,7 +3458,14 @@ async fn fetch_transfers_with_cache(
     // Fall back to Dune if RPC failed or our history was truncated by a signature cap.
     // Dune transfer queries are already filtered to transfers and include vote/identity, so they
     // can backfill missing history without scanning high-volume vote tx signatures.
-    if (rpc_failed || all_transfers.is_empty() || hit_signature_cap)
+    let needs_dune = rpc_failed || all_transfers.is_empty() || hit_signature_cap;
+    if needs_dune && dune_api_key.is_none() {
+        eprintln!("    ⚠️  Warning: RPC transfer history may be incomplete (no Dune API key for fallback).");
+        eprintln!(
+            "    ⚠️  Some transfers (e.g. SFDP→vote account) may be missing. Configure a Dune API key for full coverage."
+        );
+    }
+    if needs_dune
         && dune_api_key.is_some()
         && let Some(api_key) = dune_api_key
     {

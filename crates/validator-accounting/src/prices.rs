@@ -1,4 +1,4 @@
-//! Historical price fetching from CoinGecko API
+//! Historical SOL/USD price fetching (CoinGecko → Binance → hardcoded fallback)
 
 use anyhow::Result;
 use chrono::{Duration as ChronoDuration, NaiveDate, Utc};
@@ -129,13 +129,22 @@ pub async fn fetch_historical_prices_with_cache(
     Ok(cache)
 }
 
-/// Fetch price range from CoinGecko
+/// Fetch price range — tries CoinGecko first, falls back to Binance
 async fn fetch_price_range(from: NaiveDate, to: NaiveDate, api_key: &str) -> Result<Vec<(String, f64)>> {
+    match fetch_price_range_coingecko(from, to, api_key).await {
+        Ok(prices) => Ok(prices),
+        Err(cg_err) => {
+            eprintln!("    ⚠️  CoinGecko failed ({}), trying Binance...", cg_err);
+            fetch_price_range_binance(from, to).await
+        }
+    }
+}
+
+/// Fetch price range from CoinGecko
+async fn fetch_price_range_coingecko(from: NaiveDate, to: NaiveDate, api_key: &str) -> Result<Vec<(String, f64)>> {
     let client = reqwest::Client::new();
 
-    // Convert dates to Unix timestamps
     let from_ts = from.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
-    // Add one day to 'to' to ensure we get the last day
     let to_ts = (to + ChronoDuration::days(1))
         .and_hms_opt(0, 0, 0)
         .unwrap()
@@ -150,7 +159,6 @@ async fn fetch_price_range(from: NaiveDate, to: NaiveDate, api_key: &str) -> Res
         to_ts
     );
 
-    // Retry with exponential backoff
     let max_retries = 3;
     let mut last_error = None;
     let mut data: Option<MarketChartResponse> = None;
@@ -180,7 +188,6 @@ async fn fetch_price_range(from: NaiveDate, to: NaiveDate, api_key: &str) -> Res
                         }
                     }
                 } else if response.status().as_u16() == 429 {
-                    // Rate limited - always retry
                     last_error = Some(anyhow::anyhow!("Rate limited (429)"));
                     continue;
                 } else {
@@ -196,28 +203,105 @@ async fn fetch_price_range(from: NaiveDate, to: NaiveDate, api_key: &str) -> Res
     let data =
         data.ok_or_else(|| last_error.unwrap_or_else(|| anyhow::anyhow!("Failed after {} retries", max_retries)))?;
 
-    // Convert to date -> price map (use daily close price)
     let mut daily_prices: HashMap<String, f64> = HashMap::new();
-
     for [timestamp_ms, price] in data.prices {
         let timestamp = timestamp_ms as i64 / 1000;
         if let Some(dt) = chrono::DateTime::from_timestamp(timestamp, 0) {
-            let date_str = dt.format("%Y-%m-%d").to_string();
-            // Keep the latest price for each day (close price)
-            daily_prices.insert(date_str, price);
+            daily_prices.insert(dt.format("%Y-%m-%d").to_string(), price);
         }
     }
 
     Ok(daily_prices.into_iter().collect())
 }
 
-/// Fetch current SOL price with retry logic
-pub async fn fetch_current_price(api_key: &str) -> Result<f64> {
+/// Fetch price range from Binance (no API key required).
+/// Klines endpoint returns up to 1000 daily candles per request.
+async fn fetch_price_range_binance(from: NaiveDate, to: NaiveDate) -> Result<Vec<(String, f64)>> {
     let client = reqwest::Client::new();
+    let mut all_prices: Vec<(String, f64)> = Vec::new();
 
+    // Paginate in chunks of 1000 days (Binance klines limit)
+    let mut cursor = from;
+    while cursor <= to {
+        let from_ms = cursor.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp() * 1000;
+        let to_ms = (to + ChronoDuration::days(1))
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp()
+            * 1000;
+
+        let url = format!(
+            "{}{}&startTime={}&endTime={}&limit=1000",
+            constants::BINANCE_API_BASE,
+            constants::BINANCE_KLINES,
+            from_ms,
+            to_ms
+        );
+
+        let response = client.get(&url).header("Accept", "application/json").send().await?;
+
+        if !response.status().is_success() {
+            anyhow::bail!("Binance API returned status: {}", response.status());
+        }
+
+        // Kline format: [open_time, open, high, low, close, volume, close_time, ...]
+        // Prices are returned as strings
+        let klines: Vec<Vec<serde_json::Value>> = response.json().await?;
+
+        if klines.is_empty() {
+            break;
+        }
+
+        for kline in &klines {
+            if kline.len() < 5 {
+                continue;
+            }
+            let open_time_ms = kline[0].as_i64().unwrap_or(0);
+            let close_price = kline[4].as_str().and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+
+            if close_price > 0.0
+                && let Some(dt) = chrono::DateTime::from_timestamp(open_time_ms / 1000, 0)
+            {
+                all_prices.push((dt.format("%Y-%m-%d").to_string(), close_price));
+            }
+        }
+
+        // Advance cursor past the last kline; stop if fewer than 1000 returned
+        if klines.len() < 1000 {
+            break;
+        }
+        if let Some(last) = klines.last() {
+            let last_ts = last[0].as_i64().unwrap_or(0) / 1000;
+            if let Some(dt) = chrono::DateTime::from_timestamp(last_ts, 0) {
+                cursor = dt.date_naive() + ChronoDuration::days(1);
+            } else {
+                break;
+            }
+        }
+    }
+
+    if all_prices.is_empty() {
+        anyhow::bail!("Binance returned no price data");
+    }
+
+    println!("    ✓ Binance fallback: fetched {} daily prices", all_prices.len());
+    Ok(all_prices)
+}
+
+/// Fetch current SOL price — tries CoinGecko first, falls back to Binance
+pub async fn fetch_current_price(api_key: &str) -> Result<f64> {
+    match fetch_current_price_coingecko(api_key).await {
+        Ok(price) => Ok(price),
+        Err(_) => fetch_current_price_binance().await,
+    }
+}
+
+/// Fetch current SOL price from CoinGecko
+async fn fetch_current_price_coingecko(api_key: &str) -> Result<f64> {
+    let client = reqwest::Client::new();
     let url = format!("{}{}", constants::COINGECKO_API_BASE, constants::COINGECKO_SIMPLE_PRICE);
 
-    // Retry with exponential backoff
     let max_retries = 3;
     let mut last_error = None;
 
@@ -261,6 +345,25 @@ pub async fn fetch_current_price(api_key: &str) -> Result<f64> {
     }
 
     Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Failed after {} retries", max_retries)))
+}
+
+/// Fetch current SOL price from Binance (no API key required)
+async fn fetch_current_price_binance() -> Result<f64> {
+    let client = reqwest::Client::new();
+    let url = format!("{}{}", constants::BINANCE_API_BASE, constants::BINANCE_TICKER);
+
+    let response = client.get(&url).header("Accept", "application/json").send().await?;
+
+    if !response.status().is_success() {
+        anyhow::bail!("Binance ticker returned status: {}", response.status());
+    }
+
+    // Response: {"symbol":"SOLUSDT","price":"172.50000000"}
+    let data: serde_json::Value = response.json().await?;
+    data["price"]
+        .as_str()
+        .and_then(|s| s.parse::<f64>().ok())
+        .ok_or_else(|| anyhow::anyhow!("No price in Binance response"))
 }
 
 /// Get price for a specific date from cache, with fallback

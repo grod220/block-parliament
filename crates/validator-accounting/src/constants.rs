@@ -26,6 +26,15 @@ pub const COINGECKO_MARKET_CHART: &str = "/coins/solana/market_chart/range?vs_cu
 /// CoinGecko current price endpoint
 pub const COINGECKO_SIMPLE_PRICE: &str = "/simple/price?ids=solana&vs_currencies=usd";
 
+/// Binance API base URL (fallback price source — no API key required)
+pub const BINANCE_API_BASE: &str = "https://api.binance.com/api/v3";
+
+/// Binance daily klines endpoint (append startTime/endTime/limit)
+pub const BINANCE_KLINES: &str = "/klines?symbol=SOLUSDT&interval=1d";
+
+/// Binance current ticker price endpoint
+pub const BINANCE_TICKER: &str = "/ticker/price?symbol=SOLUSDT";
+
 // =============================================================================
 // Solana Network Constants
 // =============================================================================
@@ -56,6 +65,9 @@ pub const REFERENCE_EPOCH_TIMESTAMP: i64 = 1765843200;
 // =============================================================================
 
 /// SFDP vote cost reimbursement address (Solana Foundation)
+/// Not used directly in RPC scanning (too noisy — global address), but kept for reference.
+/// SFDP transfers are detected via Dune or by scanning our own accounts' incoming transfers.
+#[allow(dead_code)]
 pub const SFDP_REIMBURSEMENT: &str = "DtZWL3BPKa5hw7yQYvaFR29PcXThpLHVU2XAAZrcLiSe";
 
 /// jitoSOL mint address (SPL token)

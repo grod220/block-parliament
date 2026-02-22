@@ -204,16 +204,13 @@ pub async fn fetch_sol_transfers(config: &Config, verbose: bool) -> Result<Vec<S
 
     let mut all_transfers = Vec::new();
 
-    // SFDP reimbursement address (Solana Foundation vote cost reimbursements)
-    let sfdp_address = Pubkey::from_str(constants::SFDP_REIMBURSEMENT).expect("Invalid SFDP address");
-
-    // Fetch for withdraw authority, personal wallet, and SFDP address
-    // Skip identity (dominated by vote txs) and vote account
-    // Personal wallet shows seeding; SFDP shows reimbursements to our accounts
+    // Fetch for withdraw authority and personal wallet.
+    // Skip identity (dominated by vote txs) and vote account.
+    // SFDP reimbursement address is excluded — it is a global address with thousands of
+    // transactions to all validators; SFDP transfers are covered by Dune fallback instead.
     for (label, account) in [
         ("withdraw authority", config.withdraw_authority),
         ("personal wallet", config.personal_wallet),
-        ("SFDP reimbursement", sfdp_address),
     ] {
         println!(
             "    Fetching transactions for {} ({})...",
@@ -564,13 +561,15 @@ pub async fn fetch_transfers_for_account(
 /// volumes (vote transactions), making naive signature scanning expensive and likely to hit the
 /// per-account signature cap. For full transfer-history accuracy, configure a Dune API key so the
 /// app can backfill SOL transfers involving vote/identity when RPC history is truncated or fails.
+///
+/// Note: The SFDP reimbursement address is intentionally excluded — it is a global Solana
+/// Foundation address with thousands of transactions to all validators, causing RPC scans to hit
+/// the signature cap (2000) with only ~1-2% of transactions relevant to us. SFDP→withdraw_authority
+/// transfers are already captured here; SFDP→vote_account transfers are covered by Dune fallback.
 pub fn get_tracked_accounts(config: &Config) -> Vec<(&'static str, Pubkey)> {
-    let sfdp_address = Pubkey::from_str(constants::SFDP_REIMBURSEMENT).expect("Invalid SFDP address");
-
     vec![
         ("withdraw_authority", config.withdraw_authority),
         ("personal_wallet", config.personal_wallet),
-        ("sfdp_reimbursement", sfdp_address),
     ]
 }
 
