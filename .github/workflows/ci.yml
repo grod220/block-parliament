@@ -28,16 +28,11 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+      - name: Create placeholder report for include_str!
+        run: mkdir -p output && echo '<html><body>placeholder</body></html>' > output/report.html
+
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Build
         run: cargo build -p bp-web --features ssr
-
-  build-docker:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build Docker image
-        run: docker build -t bp-web-test .

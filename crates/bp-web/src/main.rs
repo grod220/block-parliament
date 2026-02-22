@@ -5,10 +5,8 @@
 static FINANCIALS_HTML: &str = include_str!("../../../output/report.html");
 
 #[cfg(feature = "ssr")]
-async fn financials_handler(
-    headers: axum::http::HeaderMap,
-) -> axum::response::Response {
-    use axum::http::{header, HeaderName, StatusCode};
+async fn financials_handler(headers: axum::http::HeaderMap) -> axum::response::Response {
+    use axum::http::{HeaderName, StatusCode, header};
     use axum::response::IntoResponse;
     use base64::Engine;
 
@@ -18,11 +16,7 @@ async fn financials_handler(
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Basic "))
-        .and_then(|encoded| {
-            base64::engine::general_purpose::STANDARD
-                .decode(encoded)
-                .ok()
-        })
+        .and_then(|encoded| base64::engine::general_purpose::STANDARD.decode(encoded).ok())
         .and_then(|decoded| String::from_utf8(decoded).ok())
         .map(|credentials| {
             let pass = credentials.split_once(':').map(|x| x.1).unwrap_or("");
@@ -34,10 +28,7 @@ async fn financials_handler(
         return (
             StatusCode::UNAUTHORIZED,
             [
-                (
-                    header::WWW_AUTHENTICATE,
-                    "Basic realm=\"Block Parliament Financials\"",
-                ),
+                (header::WWW_AUTHENTICATE, "Basic realm=\"Block Parliament Financials\""),
                 (header::CACHE_CONTROL, "no-store"),
             ],
             "",
