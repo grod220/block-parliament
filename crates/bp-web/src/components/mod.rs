@@ -1,6 +1,6 @@
 mod copy_button;
 mod external_link;
-mod metrics;
+pub mod metrics;
 
 mod owl_mark;
 mod section;

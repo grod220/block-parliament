@@ -28,11 +28,22 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      - name: Create placeholder report for include_str!
-        run: mkdir -p output && echo '<html><body>placeholder</body></html>' > output/report.html
-
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Build
         run: cargo build -p bp-web --features ssr
+
+  deploy:
+    needs: check
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to Fly.io
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

@@ -105,20 +105,57 @@ pub struct ValidatorConfig {
     pub sfdp_acceptance_date: Option<String>,
 }
 
-/// API keys section
+/// API keys section.
+/// All fields default to empty strings so they can be provided entirely via
+/// environment variables (HELIUS_API_KEY, COINGECKO_API_KEY, DUNE_API_KEY).
 #[derive(Debug, Deserialize)]
 pub struct ApiKeys {
+    #[serde(default)]
     pub helius: String,
+    #[serde(default)]
     pub coingecko: String,
     #[serde(default)]
     pub dune: Option<String>,
 }
 
-/// Notion integration configuration
+/// Notion integration configuration.
+/// Fields default to empty strings so they can be provided entirely via
+/// environment variables (NOTION_API_TOKEN, NOTION_DB_ID).
 #[derive(Debug, Clone, Deserialize)]
 pub struct NotionConfig {
+    #[serde(default)]
     pub api_token: String,
+    #[serde(default)]
     pub hours_database_id: String,
+}
+
+impl ApiKeys {
+    /// Override API keys from environment variables if set.
+    /// Env vars: HELIUS_API_KEY, COINGECKO_API_KEY, DUNE_API_KEY
+    pub fn apply_env_overrides(&mut self) {
+        if let Ok(val) = std::env::var("HELIUS_API_KEY") {
+            self.helius = val;
+        }
+        if let Ok(val) = std::env::var("COINGECKO_API_KEY") {
+            self.coingecko = val;
+        }
+        if let Ok(val) = std::env::var("DUNE_API_KEY") {
+            self.dune = Some(val);
+        }
+    }
+}
+
+impl NotionConfig {
+    /// Override Notion credentials from environment variables if set.
+    /// Env vars: NOTION_API_TOKEN, NOTION_DB_ID
+    pub fn apply_env_overrides(&mut self) {
+        if let Ok(val) = std::env::var("NOTION_API_TOKEN") {
+            self.api_token = val;
+        }
+        if let Ok(val) = std::env::var("NOTION_DB_ID") {
+            self.hours_database_id = val;
+        }
+    }
 }
 
 impl FileConfig {
@@ -127,13 +164,21 @@ impl FileConfig {
         let content =
             std::fs::read_to_string(path).with_context(|| format!("Failed to read config file: {}", path.display()))?;
 
-        toml::from_str(&content).with_context(|| {
+        let mut config: Self = toml::from_str(&content).with_context(|| {
             "Failed to parse config.toml. Check for:\n\
              - Missing required fields (validator.vote_account, validator.identity, etc.)\n\
              - Invalid TOML syntax (missing quotes, brackets, etc.)\n\
              - Incorrect data types (strings vs numbers)\n\n\
              See config.toml.example for the expected format."
-        })
+        })?;
+
+        // Allow env vars to override API keys (useful for Fly.io secrets)
+        config.api_keys.apply_env_overrides();
+        if let Some(ref mut notion) = config.notion {
+            notion.apply_env_overrides();
+        }
+
+        Ok(config)
     }
 }
 
@@ -185,9 +230,21 @@ pub struct Config {
 }
 
 impl Config {
-    /// Create config from file config and optional RPC URL override
+    /// Create config from file config and optional RPC URL override.
+    /// API keys can come from config.toml, environment variables, or both
+    /// (env vars take precedence — see `ApiKeys::apply_env_overrides`).
     pub fn from_file(file_config: &FileConfig, rpc_url: Option<String>) -> Result<Self> {
         let validator = &file_config.validator;
+
+        // Validate that required API keys are present (from either TOML or env)
+        anyhow::ensure!(
+            !file_config.api_keys.helius.is_empty(),
+            "Helius API key is required. Set it in config.toml [api_keys] or via HELIUS_API_KEY env var."
+        );
+        anyhow::ensure!(
+            !file_config.api_keys.coingecko.is_empty(),
+            "CoinGecko API key is required. Set it in config.toml [api_keys] or via COINGECKO_API_KEY env var."
+        );
 
         // BAM config defaults
         let (bam_enabled, bam_first_epoch, bam_jitosol_rate) = match &file_config.bam {

@@ -16,29 +16,34 @@ pub struct MetricsData {
     pub sfdp_status: Option<SfdpStatus>,
 }
 
-/// Server function to fetch all metrics data
-/// This runs on the server during SSR, avoiding CORS issues
-#[server(FetchMetrics)]
-pub async fn fetch_metrics() -> Result<Option<MetricsData>, ServerFnError> {
-    use crate::api::{get_jito_mev_history, get_network_comparison, get_sfdp_status, get_validator_data};
+/// Response that includes the data plus when it was last updated
+#[derive(Clone, Serialize, Deserialize)]
+pub struct MetricsResponse {
+    pub data: MetricsData,
+    /// ISO 8601 timestamp of when the data was fetched, or None if live
+    pub fetched_at: Option<String>,
+}
 
-    // Fetch Stakewiz data first (required)
-    let Some(validator) = get_validator_data().await else {
+/// Server function to fetch metrics data from SQLite.
+/// All API calls happen in the ingestion cron job — this only reads from the database.
+#[server(FetchMetrics)]
+pub async fn fetch_metrics() -> Result<Option<MetricsResponse>, ServerFnError> {
+    use crate::db;
+
+    let Some((json, fetched_at)) = db::get_latest_metrics()
+        .await
+        .map_err(|e| ServerFnError::new(format!("Database error: {}", e)))?
+    else {
+        // No data in DB yet — ingestion hasn't run
         return Ok(None);
     };
 
-    // Fetch additional data in parallel - each can fail independently
-    let (mev_result, sfdp_result, network_result) = futures::join!(
-        get_jito_mev_history(5),
-        get_sfdp_status(),
-        get_network_comparison(validator.skip_rate, validator.activated_stake),
-    );
+    let data: MetricsData =
+        serde_json::from_str(&json).map_err(|e| ServerFnError::new(format!("Failed to deserialize metrics: {}", e)))?;
 
-    Ok(Some(MetricsData {
-        validator,
-        mev_history: mev_result,
-        network_comp: network_result,
-        sfdp_status: sfdp_result,
+    Ok(Some(MetricsResponse {
+        data,
+        fetched_at: Some(fetched_at),
     }))
 }
 
@@ -82,10 +87,17 @@ pub fn Metrics() -> impl IntoView {
             {move || {
                 metrics.get().map(|result| {
                     match result {
-                        Ok(Some(data)) => view! { <MetricsContent data=data /> }.into_any(),
-                        Ok(None) | Err(_) => view! {
+                        Ok(Some(resp)) => view! { <MetricsContent data=resp.data fetched_at=resp.fetched_at /> }.into_any(),
+                        Ok(None) => view! {
                             <div class="text-[var(--ink-light)]">
-                                "Live metrics unavailable. See "
+                                "Metrics not yet available — waiting for first data ingestion. See "
+                                <a href=CONFIG.links.stakewiz>"Stakewiz"</a>
+                                " for current data."
+                            </div>
+                        }.into_any(),
+                        Err(_) => view! {
+                            <div class="text-[var(--ink-light)]">
+                                "Error loading metrics. See "
                                 <a href=CONFIG.links.stakewiz>"Stakewiz"</a>
                                 " for current data."
                             </div>
@@ -98,7 +110,7 @@ pub fn Metrics() -> impl IntoView {
 }
 
 #[component]
-fn MetricsContent(data: MetricsData) -> impl IntoView {
+fn MetricsContent(data: MetricsData, fetched_at: Option<String>) -> impl IntoView {
     let v = data.validator.clone();
     let status_icon = if v.delinquent { "\u{2717}" } else { "\u{2713}" };
     let status_text = if v.delinquent { "DELINQUENT" } else { "ACTIVE" };
@@ -117,6 +129,13 @@ fn MetricsContent(data: MetricsData) -> impl IntoView {
 
     view! {
         <div class="space-y-4">
+            // "Data last updated" timestamp
+            {fetched_at.map(|ts| view! {
+                <div class="text-xs text-[var(--ink-light)] text-right">
+                    "data updated " {ts} " UTC"
+                </div>
+            })}
+
             // Hero APY - the number delegators care about most
             <div class="border border-dashed border-[var(--rule)] p-4 text-center">
                 <div class="text-[var(--ink-light)] text-sm">"TOTAL APY"</div>

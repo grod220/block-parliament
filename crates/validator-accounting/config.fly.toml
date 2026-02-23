@@ -1,0 +1,29 @@
+# Validator Finances Configuration - Block Parliament (Fly.io)
+# This file contains only non-secret validator configuration.
+# API keys are provided via Fly secrets (environment variables):
+#   HELIUS_API_KEY, COINGECKO_API_KEY, DUNE_API_KEY,
+#   NOTION_API_TOKEN, NOTION_DB_ID
+
+[validator]
+vote_account = "4PL2ZFoZJHgkbZ54US4qNC58X69Fa1FKtY4CaVKeuQPg"
+identity = "mD1afZhSisoXfJLT8nYwSFANqjr1KPoDUEpYTEfFX1e"
+withdraw_authority = "AN58nFDFdehKbP7d3KALhnCJAsWNE7cWpCR6dLVAj9xm"
+personal_wallet = "CDfxi8DUxspoFPjdiXGyKkewCuQ8wJMszbBEtT4FTMZX"
+commission_percent = 5
+first_reward_epoch = 900
+bootstrap_date = "2025-11-19"
+sfdp_acceptance_date = "2025-12-16"
+
+[api_keys]
+# Provided via env vars — leave empty
+
+[doublezero]
+enabled = true
+fee_rate = 0.05
+first_epoch = 859
+deposit_account = "JCcyWEifvboLSnSMzkaEbiynrWsqaQ4GrQNpieamsfsv"
+
+[notion]
+# Provided via env vars — use placeholders
+api_token = ""
+hours_database_id = ""

@@ -41,6 +41,10 @@ sfdp_acceptance_date = "2025-01-01"
 # =============================================================================
 # API Keys
 # =============================================================================
+# All API keys can be provided via environment variables instead:
+#   HELIUS_API_KEY, COINGECKO_API_KEY, DUNE_API_KEY
+# Env vars take precedence over values in this file.
+# On Fly.io, use `fly secrets set` and leave [api_keys] empty or omit values.
 [api_keys]
 # Helius RPC API key (https://helius.dev)
 helius = "your-helius-api-key-here"
@@ -102,7 +106,9 @@ deposit_account = "YourDoubleZeroDepositPDAHere"
 # =============================================================================
 [notion]
 # Notion integration token (https://www.notion.so/my-integrations)
+# Can also be set via NOTION_API_TOKEN env var
 api_token = "your-notion-api-token-here"
 
 # Database ID for contractor hours log
+# Can also be set via NOTION_DB_ID env var
 hours_database_id = "your-database-id-here"

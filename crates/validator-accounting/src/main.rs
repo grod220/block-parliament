@@ -3421,7 +3421,6 @@ async fn fetch_transfers_with_cache(
 
     // For each tracked account, fetch new transfers since the last cached slot
     let mut new_count = 0;
-    let mut rpc_failed = false;
     let mut hit_signature_cap = false;
 
     for (label, account) in transactions::get_tracked_accounts(config) {
@@ -3469,7 +3468,6 @@ async fn fetch_transfers_with_cache(
             }
             Err(e) => {
                 eprintln!("    Warning: RPC failed for {}: {}", label, e);
-                rpc_failed = true;
             }
         }
     }

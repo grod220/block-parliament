@@ -595,6 +595,8 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
+ "chrono",
+ "clap",
  "futures",
  "http 1.4.0",
  "leptos",
@@ -604,6 +606,7 @@ dependencies = [
  "reqwest 0.13.1",
  "serde",
  "serde_json",
+ "sqlx",
  "tokio",
  "tower",
  "tower-http",
