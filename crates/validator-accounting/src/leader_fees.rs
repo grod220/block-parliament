@@ -142,18 +142,45 @@ async fn fetch_epoch_leader_fees(client: &reqwest::Client, config: &Config, epoc
     // Fetch block rewards for each leader slot
     let mut total_fees: u64 = 0;
     let mut blocks_produced: u64 = 0;
+    let mut skipped_slots: u64 = 0;
+    let mut unavailable_slots: u64 = 0;
 
     for slot in &absolute_slots {
-        match get_block_fee_reward(client, &config.rpc_url, *slot, &identity).await {
-            Ok(Some(fee)) => {
+        // Retry transient RPC failures so we don't undercount completed epochs.
+        const SLOT_FETCH_RETRIES: usize = 2;
+        let mut last_err: Option<anyhow::Error> = None;
+        let mut reward: Option<Option<u64>> = None;
+
+        for attempt in 0..=SLOT_FETCH_RETRIES {
+            match get_block_fee_reward(client, &config.rpc_url, *slot, &identity).await {
+                Ok(result) => {
+                    reward = Some(result);
+                    break;
+                }
+                Err(e) => {
+                    last_err = Some(e);
+                    if attempt < SLOT_FETCH_RETRIES {
+                        sleep(Duration::from_millis(150)).await;
+                    }
+                }
+            }
+        }
+
+        match reward {
+            Some(Some(fee)) => {
                 total_fees += fee;
                 blocks_produced += 1;
             }
-            Ok(None) => {
-                // Block was skipped or no fee reward
+            Some(None) => {
+                // Block was skipped or had no fee reward.
+                skipped_slots += 1;
             }
-            Err(_) => {
-                // Block data unavailable (pruned or skipped)
+            None => {
+                // Persistent RPC failure after retries.
+                unavailable_slots += 1;
+                if let Some(err) = &last_err {
+                    eprintln!("      Slot {}: RPC unavailable after retries ({})", slot, err);
+                }
             }
         }
 
@@ -161,13 +188,24 @@ async fn fetch_epoch_leader_fees(client: &reqwest::Client, config: &Config, epoc
         sleep(Duration::from_millis(constants::BLOCK_FETCH_DELAY_MS)).await;
     }
 
-    let skipped = absolute_slots.len() as u64 - blocks_produced;
+    // If any slots are unavailable, this epoch's fee total is incomplete.
+    // Return an error so callers can use fallback sources instead of caching
+    // a permanently-understated value.
+    if unavailable_slots > 0 {
+        anyhow::bail!(
+            "incomplete epoch {}: {} leader slots unavailable ({} blocks, {} skipped)",
+            epoch,
+            unavailable_slots,
+            blocks_produced,
+            skipped_slots
+        );
+    }
 
     Ok(EpochLeaderFees {
         epoch,
         leader_slots: absolute_slots.len() as u64,
         blocks_produced,
-        skipped_slots: skipped,
+        skipped_slots,
         total_fees_lamports: total_fees,
         total_fees_sol: total_fees as f64 / 1e9,
         date: Some(epoch_to_date(epoch)),

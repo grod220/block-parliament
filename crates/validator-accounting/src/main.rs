@@ -2738,6 +2738,7 @@ async fn run_report_generation(args: Args, cache: Cache) -> Result<()> {
     println!("Loading vote costs...");
     let mut vote_costs = cache.get_vote_costs(start_epoch, end_epoch).await?;
     let cached_count = vote_costs.len();
+    let completed_end = end_epoch.min(current_epoch.saturating_sub(1));
 
     // Find missing epochs and auto-estimate them
     let cached_epochs: std::collections::HashSet<u64> = vote_costs.iter().map(|c| c.epoch).collect();
@@ -2746,7 +2747,11 @@ async fn run_report_generation(args: Args, cache: Cache) -> Result<()> {
     for epoch in start_epoch..=end_epoch {
         if !cached_epochs.contains(&epoch) {
             let estimate = vote_costs::estimate_vote_cost(epoch);
-            estimated_costs.push(estimate.clone());
+            // Persist only completed-epoch estimates.
+            // In-progress epoch estimates are volatile and should not become sticky cache rows.
+            if epoch <= completed_end {
+                estimated_costs.push(estimate.clone());
+            }
             vote_costs.push(estimate);
             estimated_epochs.push(epoch);
         }
@@ -3207,6 +3212,8 @@ async fn fetch_leader_fees_with_cache(
     no_cache: bool,
     dune_api_key: Option<&str>,
 ) -> Result<Vec<leader_fees::EpochLeaderFees>> {
+    const RECENT_LEADER_FEE_REFRESH_EPOCHS: u64 = 3;
+
     if no_cache {
         let fees = leader_fees::fetch_leader_fees(config, start_epoch, Some(end_epoch)).await?;
         // Only cache completed epochs
@@ -3220,28 +3227,47 @@ async fn fetch_leader_fees_with_cache(
     let mut fees = cache.get_leader_fees(start_epoch, completed_end).await?;
     let cached_count = fees.len();
 
-    // Find missing completed epochs
+    // Find missing completed epochs.
     let missing: Vec<u64> = cache
         .get_missing_leader_fee_epochs(start_epoch, completed_end)
         .await?
         .into_iter()
         .collect();
+    let missing_set: std::collections::HashSet<u64> = missing.iter().copied().collect();
+
+    // Always refresh the most recent completed epochs. This prevents stale/partial
+    // cached rows from persisting forever when earlier RPC reads were incomplete.
+    let refresh_start = completed_end
+        .saturating_add(1)
+        .saturating_sub(RECENT_LEADER_FEE_REFRESH_EPOCHS)
+        .max(start_epoch);
+    let refresh_epochs: Vec<u64> = if completed_end >= start_epoch {
+        (refresh_start..=completed_end).collect()
+    } else {
+        Vec::new()
+    };
+
+    // Union of missing + refresh epochs (deduped).
+    let mut epochs_to_fetch: std::collections::BTreeSet<u64> = std::collections::BTreeSet::new();
+    epochs_to_fetch.extend(missing.iter().copied());
+    epochs_to_fetch.extend(refresh_epochs.iter().copied());
 
     // Also need to fetch current epoch if requested
     let need_current = end_epoch >= current_epoch;
 
-    if !missing.is_empty() {
-        let epoch_word = if missing.len() == 1 { "epoch" } else { "epochs" };
+    if !epochs_to_fetch.is_empty() {
+        let refresh_only = epochs_to_fetch.iter().filter(|e| !missing_set.contains(e)).count();
         println!(
-            "    Fetching {} missing {} (this may take a while)...",
+            "    Fetching {} epoch(s): {} missing, {} refresh (this may take a while)...",
+            epochs_to_fetch.len(),
             missing.len(),
-            epoch_word
+            refresh_only
         );
 
         let mut rpc_failures: Vec<u64> = Vec::new();
 
-        // Fetch missing epochs via RPC
-        for epoch in &missing {
+        // Fetch needed epochs via RPC
+        for epoch in &epochs_to_fetch {
             match leader_fees::fetch_leader_fees(config, *epoch, Some(*epoch)).await {
                 Ok(fetched) if !fetched.is_empty() => {
                     // Store completed epochs in cache
@@ -3273,11 +3299,11 @@ async fn fetch_leader_fees_with_cache(
                         let filled_epochs: std::collections::HashSet<u64> = needed.iter().map(|f| f.epoch).collect();
                         fees.extend(needed);
 
-                        // Cache epochs that remain unfilled (no data exists)
-                        // This prevents re-querying epochs that genuinely have no leader slots
+                        // Cache unresolved epochs as zero rows only if they were truly missing.
+                        // For refresh epochs, keep prior cached data if both RPC and Dune fail.
                         let unfilled: Vec<_> = rpc_failures
                             .iter()
-                            .filter(|e| !filled_epochs.contains(e))
+                            .filter(|e| missing_set.contains(e) && !filled_epochs.contains(e))
                             .map(|&epoch| leader_fees::EpochLeaderFees {
                                 epoch,
                                 leader_slots: 0,
@@ -3294,10 +3320,11 @@ async fn fetch_leader_fees_with_cache(
                             cache.store_leader_fees(&unfilled).await?;
                         }
                     } else {
-                        // Dune returned data but none for our requested epochs
-                        // Cache the requested epochs as having no data
+                        // Dune returned data but none for the failed epochs.
+                        // Only write explicit zeros for epochs that were missing.
                         let empty_epochs: Vec<_> = rpc_failures
                             .iter()
+                            .filter(|e| missing_set.contains(e))
                             .map(|&epoch| leader_fees::EpochLeaderFees {
                                 epoch,
                                 leader_slots: 0,
@@ -3330,10 +3357,13 @@ async fn fetch_leader_fees_with_cache(
         println!("    ({} epochs from cache)", cached_count);
     }
 
-    // Sort by epoch
-    fees.sort_by_key(|f| f.epoch);
-
-    Ok(fees)
+    // Deduplicate by epoch (freshly fetched rows override stale cached rows),
+    // then return sorted by epoch.
+    let mut by_epoch: std::collections::BTreeMap<u64, leader_fees::EpochLeaderFees> = std::collections::BTreeMap::new();
+    for fee in fees {
+        by_epoch.insert(fee.epoch, fee);
+    }
+    Ok(by_epoch.into_values().collect())
 }
 
 /// Fetch prices with caching - only fetches missing dates
