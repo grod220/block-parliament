@@ -10,7 +10,7 @@ pub mod timeline;
 pub mod types;
 
 use anyhow::{Context, Result};
-use chrono::NaiveDate;
+use chrono::{NaiveDate, Utc};
 
 use self::config::ValidatorConfig;
 use self::types::*;
@@ -41,9 +41,9 @@ pub async fn generate_report(data_dir: &str) -> String {
     }
 }
 
-fn on_or_after(date: &str, cutoff: NaiveDate) -> bool {
+fn within_actual_window(date: &str, cutoff: NaiveDate, today: NaiveDate) -> bool {
     NaiveDate::parse_from_str(date, "%Y-%m-%d")
-        .map(|d| d >= cutoff)
+        .map(|d| d >= cutoff && d <= today)
         .unwrap_or(false)
 }
 
@@ -91,14 +91,15 @@ async fn try_generate(data_dir: &str) -> Result<String> {
 
     // ── Enforce business start cutoff (first day of bootstrap month) ───
     let cutoff = config.business_start_date();
-    rewards.retain(|r| r.date.as_deref().is_some_and(|d| on_or_after(d, cutoff)));
-    leader_fees.retain(|f| f.date.as_deref().is_some_and(|d| on_or_after(d, cutoff)));
-    mev_claims.retain(|m| m.date.as_deref().is_some_and(|d| on_or_after(d, cutoff)));
-    bam_claims.retain(|b| b.date.as_deref().is_some_and(|d| on_or_after(d, cutoff)));
-    vote_costs.retain(|v| v.date.as_deref().is_some_and(|d| on_or_after(d, cutoff)));
-    doublezero_fees.retain(|f| f.date.as_deref().is_some_and(|d| on_or_after(d, cutoff)));
-    one_time_expenses.retain(|e| on_or_after(&e.date, cutoff));
-    transfers.retain(|t| t.date.as_deref().is_some_and(|d| on_or_after(d, cutoff)));
+    let today = Utc::now().date_naive();
+    rewards.retain(|r| r.date.as_deref().is_some_and(|d| within_actual_window(d, cutoff, today)));
+    leader_fees.retain(|f| f.date.as_deref().is_some_and(|d| within_actual_window(d, cutoff, today)));
+    mev_claims.retain(|m| m.date.as_deref().is_some_and(|d| within_actual_window(d, cutoff, today)));
+    bam_claims.retain(|b| b.date.as_deref().is_some_and(|d| within_actual_window(d, cutoff, today)));
+    vote_costs.retain(|v| v.date.as_deref().is_some_and(|d| within_actual_window(d, cutoff, today)));
+    doublezero_fees.retain(|f| f.date.as_deref().is_some_and(|d| within_actual_window(d, cutoff, today)));
+    one_time_expenses.retain(|e| within_actual_window(&e.date, cutoff, today));
+    transfers.retain(|t| t.date.as_deref().is_some_and(|d| within_actual_window(d, cutoff, today)));
 
     // ── Expand recurring expenses ───────────────────────────────────────
     let mut all_expenses = one_time_expenses;
@@ -117,7 +118,7 @@ async fn try_generate(data_dir: &str) -> Result<String> {
         let mut end_month = reward_months.iter().max().cloned();
 
         if start_month.is_none() || end_month.is_none() {
-            let current_month = chrono::Utc::now().format("%Y-%m").to_string();
+            let current_month = today.format("%Y-%m").to_string();
             start_month = recurring_expenses
                 .iter()
                 .filter_map(|r| month_key_from_date(&r.start_date))
@@ -144,6 +145,9 @@ async fn try_generate(data_dir: &str) -> Result<String> {
             all_expenses.extend(expanded);
         }
     }
+
+    // Guardrail: recurring expansion can create entries later in the current month.
+    all_expenses.retain(|e| within_actual_window(&e.date, cutoff, today));
 
     // ── Categorize transfers ────────────────────────────────────────────
     let categorized = categorize::categorize_transfers(&transfers, &config);
