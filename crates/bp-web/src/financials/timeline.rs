@@ -3,7 +3,7 @@
 //! Ported from `validator-accounting/src/html_report.rs` (build_timeline,
 //! build_tax_timeline) and `tax_report.rs` (build_tax_rows).
 
-use chrono::{Datelike, NaiveDate};
+use chrono::{Datelike, NaiveDate, Utc};
 
 use super::config::ValidatorConfig;
 use super::types::*;
@@ -13,6 +13,12 @@ use super::types::*;
 /// Map "unknown" → a sentinel that sorts before all real ISO dates.
 fn sort_date(d: &str) -> &str {
     if d == "unknown" { "0000-00-00" } else { d }
+}
+
+fn is_future_date(date: &str, today: NaiveDate) -> bool {
+    NaiveDate::parse_from_str(date, "%Y-%m-%d")
+        .map(|d| d > today)
+        .unwrap_or(false)
 }
 
 /// Stable ordering within the same date: revenue first, then expenses, then balance-sheet.
@@ -396,6 +402,10 @@ pub fn build_timeline(data: &ReportData) -> Vec<TimelineEvent> {
         });
     }
 
+    // Hide future-dated rows in actual timelines.
+    let today = Utc::now().date_naive();
+    events.retain(|ev| !is_future_date(&ev.date, today));
+
     // ── Sort & accumulate ───────────────────────────────────────────────
     events.sort_by(|a, b| {
         sort_date(&a.date)
@@ -726,6 +736,9 @@ pub fn build_tax_timeline(data: &ReportData, config: &ValidatorConfig) -> Vec<Ti
             }
         })
         .collect();
+
+    let today = Utc::now().date_naive();
+    events.retain(|ev| !is_future_date(&ev.date, today));
 
     events.sort_by(|a, b| {
         sort_date(&a.date)
