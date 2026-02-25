@@ -92,14 +92,42 @@ async fn try_generate(data_dir: &str) -> Result<String> {
     // ── Enforce business start cutoff (first day of bootstrap month) ───
     let cutoff = config.business_start_date();
     let today = Utc::now().date_naive();
-    rewards.retain(|r| r.date.as_deref().is_some_and(|d| within_actual_window(d, cutoff, today)));
-    leader_fees.retain(|f| f.date.as_deref().is_some_and(|d| within_actual_window(d, cutoff, today)));
-    mev_claims.retain(|m| m.date.as_deref().is_some_and(|d| within_actual_window(d, cutoff, today)));
-    bam_claims.retain(|b| b.date.as_deref().is_some_and(|d| within_actual_window(d, cutoff, today)));
-    vote_costs.retain(|v| v.date.as_deref().is_some_and(|d| within_actual_window(d, cutoff, today)));
-    doublezero_fees.retain(|f| f.date.as_deref().is_some_and(|d| within_actual_window(d, cutoff, today)));
+    rewards.retain(|r| {
+        r.date
+            .as_deref()
+            .is_some_and(|d| within_actual_window(d, cutoff, today))
+    });
+    leader_fees.retain(|f| {
+        f.date
+            .as_deref()
+            .is_some_and(|d| within_actual_window(d, cutoff, today))
+    });
+    mev_claims.retain(|m| {
+        m.date
+            .as_deref()
+            .is_some_and(|d| within_actual_window(d, cutoff, today))
+    });
+    bam_claims.retain(|b| {
+        b.date
+            .as_deref()
+            .is_some_and(|d| within_actual_window(d, cutoff, today))
+    });
+    vote_costs.retain(|v| {
+        v.date
+            .as_deref()
+            .is_some_and(|d| within_actual_window(d, cutoff, today))
+    });
+    doublezero_fees.retain(|f| {
+        f.date
+            .as_deref()
+            .is_some_and(|d| within_actual_window(d, cutoff, today))
+    });
     one_time_expenses.retain(|e| within_actual_window(&e.date, cutoff, today));
-    transfers.retain(|t| t.date.as_deref().is_some_and(|d| within_actual_window(d, cutoff, today)));
+    transfers.retain(|t| {
+        t.date
+            .as_deref()
+            .is_some_and(|d| within_actual_window(d, cutoff, today))
+    });
 
     // ── Expand recurring expenses ───────────────────────────────────────
     let mut all_expenses = one_time_expenses;
