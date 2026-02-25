@@ -207,17 +207,26 @@ pub fn get_price(prices: &PriceMap, date: &str) -> f64 {
     if let Some(&p) = prices.get(date) {
         return p;
     }
-    // Try nearby dates (±1 day) for weekends/gaps
-    if let Ok(d) = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d") {
-        for offset in [1i64, -1, 2, -2] {
-            if let Some(nearby) = d.checked_add_signed(chrono::Duration::days(offset)) {
-                let key = nearby.format("%Y-%m-%d").to_string();
-                if let Some(&p) = prices.get(&key) {
-                    return p;
+
+    // Match validator-accounting behavior exactly:
+    // use the closest available cached date (no fixed +/- window).
+    if let Ok(target) = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d") {
+        let mut closest_price = FALLBACK_PRICE;
+        let mut closest_diff = i64::MAX;
+
+        for (d, p) in prices {
+            if let Ok(cached_date) = chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d") {
+                let diff = (target - cached_date).num_days().abs();
+                if diff < closest_diff {
+                    closest_diff = diff;
+                    closest_price = *p;
                 }
             }
         }
+
+        return closest_price;
     }
+
     FALLBACK_PRICE
 }
 
