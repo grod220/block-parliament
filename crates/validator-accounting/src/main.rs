@@ -1788,6 +1788,20 @@ async fn handle_tax_command(
 
     // Off-chain expenses
     println!("Loading expenses...");
+
+    // Refresh cached Notion contractor rows first, so all consumers read from DB.
+    if let Some(notion_config) = &file_config.notion {
+        match notion::fetch_hours_log(notion_config).await {
+            Ok(hours_entries) => {
+                let contractor_expenses = notion::hours_to_expenses(&hours_entries);
+                cache.sync_notion_expenses(&contractor_expenses).await?;
+            }
+            Err(e) => {
+                eprintln!("  Warning: Failed to fetch Notion data: {}", e);
+            }
+        }
+    }
+
     let mut all_expenses = cache.get_expenses().await?;
 
     // Expand recurring expenses
@@ -1817,18 +1831,6 @@ async fn handle_tax_command(
         }
     }
 
-    // Fetch contractor hours from Notion if configured
-    if let Some(notion_config) = &file_config.notion {
-        match notion::fetch_hours_log(notion_config).await {
-            Ok(hours_entries) => {
-                let contractor_expenses = notion::hours_to_expenses(&hours_entries);
-                all_expenses.extend(contractor_expenses);
-            }
-            Err(e) => {
-                eprintln!("  Warning: Failed to fetch Notion data: {}", e);
-            }
-        }
-    }
     println!("  {} expense entries\n", all_expenses.len());
 
     // Fetch prices
@@ -2781,6 +2783,31 @@ async fn run_report_generation(args: Args, cache: Cache) -> Result<()> {
 
     // Step 7: Load expenses (database + recurring + Notion contractor hours)
     println!("Loading expenses...");
+
+    // Refresh cached Notion contractor rows first, so reports/web read from DB.
+    if let Some(notion_config) = &file_config.notion {
+        println!("  Fetching contractor hours from Notion...");
+        match notion::fetch_hours_log(notion_config).await {
+            Ok(hours_entries) => {
+                let summary = notion::hours_summary(&hours_entries);
+                println!(
+                    "    Found {} entries: {:.1}h total (${:.2}), {:.1}h unpaid (${:.2})",
+                    summary.total_entries,
+                    summary.total_hours,
+                    summary.total_amount,
+                    summary.unpaid_hours,
+                    summary.unpaid_amount
+                );
+
+                let contractor_expenses = notion::hours_to_expenses(&hours_entries);
+                cache.sync_notion_expenses(&contractor_expenses).await?;
+            }
+            Err(e) => {
+                eprintln!("    Warning: Failed to fetch Notion data: {}", e);
+            }
+        }
+    }
+
     let mut all_expenses = cache.get_expenses().await?;
     let _db_expense_count = all_expenses.len();
 
@@ -2831,31 +2858,6 @@ async fn run_report_generation(args: Args, cache: Cache) -> Result<()> {
             all_expenses.extend(expanded);
         } else {
             eprintln!("  Warning: Could not derive valid date range for recurring expenses");
-        }
-    }
-
-    // Fetch contractor hours from Notion if configured
-    if let Some(notion_config) = &file_config.notion {
-        println!("  Fetching contractor hours from Notion...");
-        match notion::fetch_hours_log(notion_config).await {
-            Ok(hours_entries) => {
-                let summary = notion::hours_summary(&hours_entries);
-                println!(
-                    "    Found {} entries: {:.1}h total (${:.2}), {:.1}h unpaid (${:.2})",
-                    summary.total_entries,
-                    summary.total_hours,
-                    summary.total_amount,
-                    summary.unpaid_hours,
-                    summary.unpaid_amount
-                );
-
-                // Convert hours to expenses and add to list
-                let contractor_expenses = notion::hours_to_expenses(&hours_entries);
-                all_expenses.extend(contractor_expenses);
-            }
-            Err(e) => {
-                eprintln!("    Warning: Failed to fetch Notion data: {}", e);
-            }
         }
     }
 

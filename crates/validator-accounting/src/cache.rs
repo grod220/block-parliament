@@ -1193,6 +1193,48 @@ impl Cache {
         Ok(count)
     }
 
+    /// Replace Notion-derived contractor expenses atomically.
+    ///
+    /// Rows are identified by `paid_with IN ('Notion Paid', 'Notion Unpaid')`.
+    /// Manual expenses are untouched.
+    pub async fn sync_notion_expenses(&self, notion_expenses: &[Expense]) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+
+        // Remove previous Notion-derived rows.
+        sqlx::query("DELETE FROM expenses WHERE paid_with IN ('Notion Paid', 'Notion Unpaid')")
+            .execute(&mut *tx)
+            .await?;
+
+        // Insert the fresh snapshot.
+        for expense in notion_expenses {
+            let category_str = match expense.category {
+                ExpenseCategory::Hosting => "Hosting",
+                ExpenseCategory::Contractor => "Contractor",
+                ExpenseCategory::Hardware => "Hardware",
+                ExpenseCategory::Software => "Software",
+                ExpenseCategory::VoteFees => "VoteFees",
+                ExpenseCategory::Other => "Other",
+            };
+
+            sqlx::query(
+                "INSERT INTO expenses (date, vendor, category, description, amount_usd, paid_with, invoice_id)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(&expense.date)
+            .bind(&expense.vendor)
+            .bind(category_str)
+            .bind(&expense.description)
+            .bind(expense.amount_usd)
+            .bind(&expense.paid_with)
+            .bind(&expense.invoice_id)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
+        Ok(())
+    }
+
     // =========================================================================
     // Recurring Expenses
     // =========================================================================

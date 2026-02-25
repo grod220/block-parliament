@@ -218,7 +218,8 @@ pub fn hours_to_expenses(entries: &[HoursLogEntry]) -> Vec<Expense> {
             category: ExpenseCategory::Contractor,
             description: format!("{} ({:.1}h)", entry.description, entry.hours),
             amount_usd: entry.amount_usd,
-            paid_with: if entry.paid { "Paid" } else { "Unpaid" }.to_string(),
+            // Tag Notion-derived rows so cache sync can replace only this subset.
+            paid_with: if entry.paid { "Notion Paid" } else { "Notion Unpaid" }.to_string(),
             invoice_id: Some(entry.page_id.clone()),
         })
         .collect()

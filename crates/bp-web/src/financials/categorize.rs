@@ -85,13 +85,14 @@ pub fn categorize_transfers(transfers: &[SolTransfer], config: &ValidatorConfig)
 
     for t in transfers {
         // 1. DoubleZero deposit
-        if let Some(ref dz) = config.doublezero_deposit_account {
-            if t.to_address == *dz && config.is_our_account(&t.from_address) {
-                let mut labeled = t.clone();
-                labeled.to_label = "DoubleZero Deposit".to_string();
-                cat.doublezero_payments.push(labeled);
-                continue;
-            }
+        if let Some(ref dz) = config.doublezero_deposit_account
+            && t.to_address == *dz
+            && config.is_our_account(&t.from_address)
+        {
+            let mut labeled = t.clone();
+            labeled.to_label = "DoubleZero Deposit".to_string();
+            cat.doublezero_payments.push(labeled);
+            continue;
         }
 
         let is_incoming = config.is_our_account(&t.to_address);
