@@ -87,6 +87,16 @@ pub struct DuneClient {
 }
 
 impl DuneClient {
+    fn query_performance() -> String {
+        let perf = std::env::var("DUNE_PERFORMANCE")
+            .unwrap_or_else(|_| "medium".to_string())
+            .to_ascii_lowercase();
+        match perf.as_str() {
+            "small" | "medium" | "large" => perf,
+            _ => "medium".to_string(),
+        }
+    }
+
     /// Create a new Dune client with validator configuration
     ///
     /// Note: Addresses are already validated as Pubkeys in Config::from_file(),
@@ -117,7 +127,7 @@ impl DuneClient {
         let execute_url = format!("{}/sql/execute", DUNE_API_BASE);
         let request = ExecuteRequest {
             sql: sql.to_string(),
-            performance: "large".to_string(),
+            performance: Self::query_performance(),
         };
 
         let resp = self
@@ -554,9 +564,16 @@ pub async fn execute_sql(api_key: &str, sql: &str) -> Result<Vec<HashMap<String,
 
     // Submit query
     let execute_url = format!("{}/sql/execute", DUNE_API_BASE);
+    let performance = std::env::var("DUNE_PERFORMANCE")
+        .unwrap_or_else(|_| "medium".to_string())
+        .to_ascii_lowercase();
+    let performance = match performance.as_str() {
+        "small" | "medium" | "large" => performance,
+        _ => "medium".to_string(),
+    };
     let request = ExecuteRequest {
         sql: sql.to_string(),
-        performance: "large".to_string(),
+        performance,
     };
 
     let response = client

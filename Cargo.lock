@@ -593,6 +593,7 @@ dependencies = [
 name = "bp-web"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "axum",
  "base64 0.22.1",
  "chrono",
@@ -608,6 +609,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "tokio",
+ "toml 0.9.11+spec-1.1.0",
  "tower",
  "tower-http",
 ]

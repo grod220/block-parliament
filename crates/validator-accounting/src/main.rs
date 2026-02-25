@@ -2793,6 +2793,7 @@ async fn run_report_generation(args: Args, cache: Cache) -> Result<()> {
             .filter_map(|r| r.date.as_deref())
             .filter_map(month_key_from_date)
             .collect();
+        let bootstrap_month = month_key_from_date(&config.bootstrap_date).unwrap_or_else(|| "2025-11".to_string());
 
         let mut start_month = reward_months.iter().min().cloned();
         let mut end_month = reward_months.iter().max().cloned();
@@ -2814,7 +2815,10 @@ async fn run_report_generation(args: Args, cache: Cache) -> Result<()> {
                 .max();
         }
 
-        if let (Some(start_month), Some(mut end_month)) = (start_month, end_month) {
+        if let (Some(mut start_month), Some(mut end_month)) = (start_month, end_month) {
+            if start_month < bootstrap_month {
+                start_month = bootstrap_month;
+            }
             if end_month < start_month {
                 end_month = start_month.clone();
             }
