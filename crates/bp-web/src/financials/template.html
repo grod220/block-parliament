@@ -1306,6 +1306,17 @@
       return sol !== 0 ? sol : usdToSol(usd);
     }
 
+    function isTaxWithdrawalType(eventType) {
+      return eventType === 'tax_revenue' || eventType === 'tax_return_capital';
+    }
+
+    function formatUsdAmountWithInlineSol(eventType, usd, sol) {
+      if (isTaxWithdrawalType(eventType)) {
+        return `${formatUsd(usd)} · ${formatSol(eventSolValue(usd, sol))}`;
+      }
+      return formatUsd(usd);
+    }
+
     function formatEventValueForUnit(usd, sol, unit) {
       return unit === 'usd' ? formatUsd(usd) : formatSol(eventSolValue(usd, sol));
     }
@@ -1910,7 +1921,9 @@
         });
         document.querySelectorAll('.ev-usd').forEach(el => {
           const usd = parseFloat(el.dataset.usd || '0');
-          el.textContent = formatUsd(usd);
+          const sol = parseFloat(el.dataset.sol || '0');
+          const eventType = el.dataset.eventType || '';
+          el.textContent = formatUsdAmountWithInlineSol(eventType, usd, sol);
         });
 
         document.querySelectorAll('.month-sep-net').forEach(el => {
@@ -2223,13 +2236,6 @@
         subEl.textContent = subLabelText;
         labelDiv.appendChild(subEl);
       }
-      if (currentViewMode === 'tax' && (ev.event_type === 'tax_revenue' || ev.event_type === 'tax_return_capital')) {
-        const solMetaEl = document.createElement('div');
-        solMetaEl.className = 'ev-label-sub';
-        solMetaEl.textContent = `Amount · ${formatSol(eventSolValue(ev.amount_usd, ev.amount_sol))}`;
-        labelDiv.appendChild(solMetaEl);
-      }
-
       const solEl = document.createElement('span');
       solEl.className = 'ev-sol';
       solEl.dataset.usd = ev.amount_usd;
@@ -2241,7 +2247,8 @@
       usdEl.className = 'ev-usd';
       usdEl.dataset.sol = ev.amount_sol;
       usdEl.dataset.usd = ev.amount_usd;
-      usdEl.textContent = formatUsd(ev.amount_usd);
+      usdEl.dataset.eventType = ev.event_type;
+      usdEl.textContent = formatUsdAmountWithInlineSol(ev.event_type, ev.amount_usd, ev.amount_sol);
 
       div.appendChild(dateEl);
       div.appendChild(labelDiv);

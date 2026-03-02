@@ -31,8 +31,8 @@ fn type_order(event_type: &str) -> u8 {
         "withdrawal" => 8,
         "doublezero_payment" => 9,
         // Tax timeline
-        "tax_revenue" => 0,
-        "tax_return_capital" => 1,
+        "tax_return_capital" => 0,
+        "tax_revenue" => 1,
         "tax_reimbursement" => 2,
         "tax_expense_vote_fees" => 3,
         "tax_expense_doublezero" => 4,
