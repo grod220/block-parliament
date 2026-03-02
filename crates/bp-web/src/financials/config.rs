@@ -48,7 +48,7 @@ pub struct ValidatorConfig {
     pub sfdp_acceptance_date: Option<String>,
     pub doublezero_deposit_account: Option<String>,
 
-    /// All "our" accounts for quick membership checks.
+    /// Business accounts for quick membership checks.
     our_accounts: HashSet<String>,
 }
 
@@ -66,10 +66,9 @@ impl ValidatorConfig {
         let mut our_accounts = HashSet::new();
         our_accounts.insert(v.vote_account.clone());
         our_accounts.insert(v.identity.clone());
-        our_accounts.insert(v.withdraw_authority.clone());
-        // Note: personal_wallet intentionally NOT in our_accounts —
-        // it's "ours" but transfers from/to it get special categorization
-        // (seeding vs withdrawal) rather than "vote_funding".
+        // Important: treat only vote + identity as business accounts for financial
+        // timelines/tax views. Withdraw authority and personal wallet are excluded
+        // from automatic business-activity categorization.
 
         Ok(Self {
             vote_account: v.vote_account,
@@ -83,7 +82,7 @@ impl ValidatorConfig {
         })
     }
 
-    /// Is this one of our validator operational accounts (vote, identity, withdraw)?
+    /// Is this one of our business accounts (vote, identity)?
     pub fn is_our_account(&self, address: &str) -> bool {
         self.our_accounts.contains(address)
     }
@@ -150,7 +149,7 @@ mod tests {
             bootstrap_date: "2025-11-19".into(),
             sfdp_acceptance_date: sfdp.map(|s| s.into()),
             doublezero_deposit_account: None,
-            our_accounts: ["VOTE", "ID", "WA"].iter().map(|s| s.to_string()).collect(),
+            our_accounts: ["VOTE", "ID"].iter().map(|s| s.to_string()).collect(),
         }
     }
 
@@ -202,6 +201,7 @@ mod tests {
         let c = cfg(None);
         assert!(c.is_our_account("VOTE"));
         assert!(c.is_our_account("ID"));
+        assert!(!c.is_our_account("WA")); // withdraw authority excluded from business accounts
         assert!(!c.is_our_account("PW")); // personal wallet is special
         assert!(!c.is_our_account("random"));
     }

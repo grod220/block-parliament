@@ -4,6 +4,7 @@
 //! build_tax_timeline) and `tax_report.rs` (build_tax_rows).
 
 use chrono::{Datelike, NaiveDate};
+use std::collections::HashMap;
 
 use super::config::ValidatorConfig;
 use super::types::*;
@@ -517,7 +518,7 @@ fn signed_tax_amounts(row: &TaxRow, event_type: &str) -> (f64, f64, bool) {
 /// taxable event (subject to seeding-capital offset).
 ///
 /// Rationale:
-/// - `withdraw_authority` / `vote_account` outflows can be genuine distributions.
+/// - `vote_account` outflows can be genuine distributions.
 /// - `identity` outflows to unknown addresses are frequently protocol operations
 ///   (e.g. tip-distribution account init, BAM claim setup, access requests), not
 ///   business withdrawals.
@@ -572,19 +573,59 @@ fn build_tax_rows(data: &ReportData, config: &ValidatorConfig) -> Vec<TaxRow> {
     rows
 }
 
+#[derive(Debug, Clone)]
+struct MergedWithdrawal {
+    date: String,
+    signature: String,
+    to_address: String,
+    to_label: String,
+    amount_sol: f64,
+}
+
+/// Merge multiple SOL outflow rows that are really one destination-level action
+/// inside a single transaction (e.g. token-account rent + transfer).
+fn merge_withdrawals(withdrawals: &[&SolTransfer]) -> Vec<MergedWithdrawal> {
+    let mut merged: HashMap<(String, String, String), MergedWithdrawal> = HashMap::new();
+
+    for w in withdrawals {
+        let date = w.date.as_deref().unwrap_or("unknown").to_string();
+        let key = (date.clone(), w.signature.clone(), w.to_address.clone());
+
+        let entry = merged.entry(key).or_insert_with(|| MergedWithdrawal {
+            date,
+            signature: w.signature.clone(),
+            to_address: w.to_address.clone(),
+            to_label: w.to_label.clone(),
+            amount_sol: 0.0,
+        });
+
+        entry.amount_sol += w.amount_sol;
+        if entry.to_label.is_empty() && !w.to_label.is_empty() {
+            entry.to_label = w.to_label.clone();
+        }
+    }
+
+    let mut out: Vec<MergedWithdrawal> = merged.into_values().collect();
+    out.sort_by(|a, b| {
+        a.date
+            .cmp(&b.date)
+            .then_with(|| a.signature.cmp(&b.signature))
+            .then_with(|| a.to_address.cmp(&b.to_address))
+    });
+    out
+}
+
 fn add_withdrawal_rows(rows: &mut Vec<TaxRow>, withdrawals: &[&SolTransfer], prices: &PriceMap, total_seeded_sol: f64) {
-    let mut sorted: Vec<&&SolTransfer> = withdrawals.iter().collect();
-    sorted.sort_by(|a, b| a.date.cmp(&b.date));
+    let merged = merge_withdrawals(withdrawals);
 
     let mut remaining_capital = total_seeded_sol;
 
-    for w in sorted {
-        let date = w.date.as_deref().unwrap_or("unknown");
+    for w in merged {
         let capital_portion = w.amount_sol.min(remaining_capital);
         let revenue_portion = w.amount_sol - capital_portion;
         remaining_capital -= capital_portion;
 
-        let price = get_price(prices, date);
+        let price = get_price(prices, &w.date);
         let dest_label = if w.to_label.is_empty() {
             shorten_pubkey(&w.to_address)
         } else {
@@ -593,7 +634,7 @@ fn add_withdrawal_rows(rows: &mut Vec<TaxRow>, withdrawals: &[&SolTransfer], pri
 
         if capital_portion > 0.0 {
             rows.push(TaxRow {
-                date: date.to_string(),
+                date: w.date.clone(),
                 entry_type: "Return of Capital".into(),
                 category: "Withdrawal".into(),
                 description: format!("Return of seed capital to {}", dest_label),
@@ -607,7 +648,7 @@ fn add_withdrawal_rows(rows: &mut Vec<TaxRow>, withdrawals: &[&SolTransfer], pri
 
         if revenue_portion > 0.0 {
             rows.push(TaxRow {
-                date: date.to_string(),
+                date: w.date.clone(),
                 entry_type: "Revenue".into(),
                 category: "Withdrawal".into(),
                 description: format!("External withdrawal to {}", dest_label),
@@ -615,7 +656,7 @@ fn add_withdrawal_rows(rows: &mut Vec<TaxRow>, withdrawals: &[&SolTransfer], pri
                 sol_price_usd: Some(price),
                 usd_value: revenue_portion * price,
                 destination: dest_label,
-                tx_signature: w.signature.clone(),
+                tx_signature: w.signature,
             });
         }
     }
@@ -843,8 +884,8 @@ bootstrap_date = "2025-11-19"
         let timeline = build_tax_timeline(&data, &config);
         let revenue_events: Vec<&TimelineEvent> = timeline.iter().filter(|e| e.event_type == "tax_revenue").collect();
 
-        // Includes: identity->personal + withdraw_authority->external
-        assert_eq!(revenue_events.len(), 2);
+        // Includes only identity->personal
+        assert_eq!(revenue_events.len(), 1);
 
         // Excludes identity->unknown protocol-like transfers
         assert!(!revenue_events.iter().any(|e| {
@@ -852,5 +893,22 @@ bootstrap_date = "2025-11-19"
                 .as_deref()
                 .is_some_and(|s| s.contains("XMic...1234") || s.contains("XMid...5678"))
         }));
+    }
+
+    #[test]
+    fn withdrawal_rows_merge_same_signature_and_destination() {
+        let prices: PriceMap = HashMap::from([(String::from("2026-01-22"), 100.0)]);
+        let mut rows = Vec::new();
+
+        let t1 = transfer("sig-merge", "WA", "DEST", 2.0, "DestLabel");
+        let t2 = transfer("sig-merge", "WA", "DEST", 0.002_039_28, "DestLabel");
+        let withdrawals: Vec<&SolTransfer> = vec![&t1, &t2];
+
+        add_withdrawal_rows(&mut rows, &withdrawals, &prices, 100.0);
+
+        // One merged capital row (no taxable portion due to large remaining capital).
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].entry_type, "Return of Capital");
+        assert!((rows[0].sol_amount.unwrap_or(0.0) - 2.002_039_28).abs() < 1e-12);
     }
 }
