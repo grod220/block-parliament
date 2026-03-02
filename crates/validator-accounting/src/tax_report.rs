@@ -1,12 +1,13 @@
 //! Withdrawal-based tax report generation
 //!
 //! Generates a tax report where:
-//! - **Revenue** = all outgoing external transfers from validator business
-//!   accounts (to exchanges, personal wallet, or any non-internal address),
+//! - **Revenue** = qualifying distribution outflows from business-source
+//!   accounts (vote/identity) to external beneficiaries,
 //!   valued at SOL/USD price on withdrawal date
 //! - **Expenses** = period costs (vote fees, DoubleZero, hosting, etc.),
 //!   deductible in the period incurred
-//! - **Internal transfers** (vote account ↔ identity) are ignored
+//! - **Internal transfers** (vote account ↔ identity) and operational identity
+//!   outflows to unknown destinations are ignored
 //!
 //! This is a parallel, non-destructive feature that does not modify existing reports.
 
@@ -16,6 +17,7 @@ use csv::Writer;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use crate::addresses;
 use crate::config::Config;
 use crate::doublezero::DoubleZeroFee;
 use crate::expenses::Expense;
@@ -57,11 +59,17 @@ pub fn build_tax_rows(data: &TaxReportData, year_filter: Option<i32>) -> (Vec<Ta
     let mut rows = Vec::new();
     let mut skipped_unknown_dates: usize = 0;
 
-    // ── Revenue: all outgoing external transfers (offset by seeding capital)
-    // Combine known withdrawals + outgoing "other" transfers (to unknown addresses)
-    let mut all_outgoing: Vec<&SolTransfer> = data.categorized.withdrawals.iter().collect();
+    // ── Revenue: qualifying distribution outflows crossing tax boundary,
+    // offset by seeding capital. Use both categorized buckets while applying
+    // the same candidate policy in one place.
+    let mut all_outgoing: Vec<&SolTransfer> = data
+        .categorized
+        .withdrawals
+        .iter()
+        .filter(|t| is_taxable_external_withdrawal_candidate(t, data.config))
+        .collect();
     for t in &data.categorized.other {
-        if data.config.is_our_account(&t.from) && !data.config.is_our_account(&t.to) {
+        if is_taxable_external_withdrawal_candidate(t, data.config) {
             all_outgoing.push(t);
         }
     }
@@ -103,6 +111,27 @@ pub fn build_tax_rows(data: &TaxReportData, year_filter: Option<i32>) -> (Vec<Ta
     });
 
     (rows, skipped_unknown_dates)
+}
+
+fn is_taxable_external_withdrawal_candidate(t: &SolTransfer, config: &Config) -> bool {
+    let from_business_source = t.from == config.vote_account || t.from == config.identity;
+    if !from_business_source {
+        return false;
+    }
+
+    // Internal business move (vote <-> identity) is never a withdrawal event.
+    if t.to == config.vote_account || t.to == config.identity {
+        return false;
+    }
+
+    // Identity outflows are often protocol operational; treat only known
+    // beneficiary channels as taxable-distribution candidates.
+    if t.from == config.identity {
+        return t.to == config.withdraw_authority || t.to == config.personal_wallet || addresses::is_exchange(&t.to);
+    }
+
+    // Vote-account outflows to any external destination are candidates.
+    true
 }
 
 /// Generate the tax report CSV and print a console summary.

@@ -515,20 +515,23 @@ fn signed_tax_amounts(row: &TaxRow, event_type: &str) -> (f64, f64, bool) {
 }
 
 /// True when an outgoing transfer should be considered a withdrawal-like
-/// taxable event (subject to seeding-capital offset).
+/// taxable candidate (subject to seeding-capital offset).
 ///
-/// Rationale:
-/// - `vote_account` outflows can be genuine distributions.
-/// - `identity` outflows to unknown addresses are frequently protocol operations
-///   (e.g. tip-distribution account init, BAM claim setup, access requests), not
-///   business withdrawals.
+/// Policy:
+/// - Source must be a business-source account (vote/identity).
+/// - vote_account -> any external address counts.
+/// - identity -> only known beneficiary channels count (withdraw authority,
+///   personal wallet, known exchange) to avoid classifying protocol-operational
+///   identity outflows as taxable distributions.
 fn is_taxable_external_withdrawal_candidate(t: &SolTransfer, config: &ValidatorConfig) -> bool {
     if !config.is_our_account(&t.from_address) || config.is_our_account(&t.to_address) {
         return false;
     }
 
     if t.from_address == config.identity {
-        return t.to_address == config.personal_wallet || super::categorize::is_exchange(&t.to_address);
+        return t.to_address == config.withdraw_authority
+            || t.to_address == config.personal_wallet
+            || super::categorize::is_exchange(&t.to_address);
     }
 
     true
@@ -582,12 +585,55 @@ struct MergedWithdrawal {
     amount_sol: f64,
 }
 
+const MIRROR_DUPLICATE_TOLERANCE_SOL: f64 = 0.00002; // 20k lamports
+
 /// Merge multiple SOL outflow rows that are really one destination-level action
 /// inside a single transaction (e.g. token-account rent + transfer).
 fn merge_withdrawals(withdrawals: &[&SolTransfer]) -> Vec<MergedWithdrawal> {
+    // First, collapse parser-mirror duplicates on the same path:
+    // same date/signature/from/to where one inferred amount is fee-adjusted
+    // and differs only by a tiny delta (typically tx fee).
+    let mut by_path: HashMap<(String, String, String, String), Vec<&SolTransfer>> = HashMap::new();
+    for w in withdrawals {
+        let date = w.date.as_deref().unwrap_or("unknown").to_string();
+        by_path
+            .entry((date, w.signature.clone(), w.from_address.clone(), w.to_address.clone()))
+            .or_default()
+            .push(w);
+    }
+
+    let mut normalized: Vec<SolTransfer> = Vec::new();
+    for ((_date, _sig, _from, _to), group) in by_path {
+        // Keep distinct amounts unless they are near-identical mirror artifacts.
+        let mut kept_amounts: Vec<f64> = Vec::new();
+        for t in &group {
+            let is_near_duplicate = kept_amounts
+                .iter()
+                .any(|&k| (k - t.amount_sol).abs() <= MIRROR_DUPLICATE_TOLERANCE_SOL);
+            if !is_near_duplicate {
+                kept_amounts.push(t.amount_sol);
+            } else if let Some(existing) = kept_amounts
+                .iter_mut()
+                .find(|k| (**k - t.amount_sol).abs() <= MIRROR_DUPLICATE_TOLERANCE_SOL)
+                && t.amount_sol > *existing
+            {
+                *existing = t.amount_sol;
+            }
+        }
+
+        // Use the first row as template for identity/labels, replacing amount.
+        if let Some(template) = group.first() {
+            for amount_sol in kept_amounts {
+                let mut row = (*template).clone();
+                row.amount_sol = amount_sol;
+                normalized.push(row);
+            }
+        }
+    }
+
     let mut merged: HashMap<(String, String, String), MergedWithdrawal> = HashMap::new();
 
-    for w in withdrawals {
+    for w in &normalized {
         let date = w.date.as_deref().unwrap_or("unknown").to_string();
         let key = (date.clone(), w.signature.clone(), w.to_address.clone());
 
@@ -846,7 +892,7 @@ bootstrap_date = "2025-11-19"
     }
 
     #[test]
-    fn tax_timeline_excludes_identity_operational_outflows() {
+    fn tax_timeline_tracks_distributions_and_excludes_identity_operational_outflows() {
         let config = test_config();
 
         let categorized = CategorizedTransfers {
@@ -854,6 +900,8 @@ bootstrap_date = "2025-11-19"
             other: vec![
                 transfer("sig-id-micro", "ID", "X_MICRO", 0.002_060_16, "XMic...1234"),
                 transfer("sig-id-mid", "ID", "X_MID", 0.129_955_84, "XMid...5678"),
+                transfer("sig-id-wa", "ID", "WA", 62.0, "Withdraw Authority"),
+                transfer("sig-vote-wa", "VOTE", "WA", 88.0, "Withdraw Authority"),
                 transfer("sig-wa-big", "WA", "X_BIG", 88.0, "XBig...9012"),
             ],
             ..Default::default()
@@ -884,14 +932,25 @@ bootstrap_date = "2025-11-19"
         let timeline = build_tax_timeline(&data, &config);
         let revenue_events: Vec<&TimelineEvent> = timeline.iter().filter(|e| e.event_type == "tax_revenue").collect();
 
-        // Includes only identity->personal
-        assert_eq!(revenue_events.len(), 1);
+        // Includes ID->PW, ID->WA, and VOTE->WA distributions.
+        assert_eq!(revenue_events.len(), 3);
 
-        // Excludes identity->unknown protocol-like transfers
+        assert!(
+            revenue_events
+                .iter()
+                .any(|e| e.sublabel.as_deref().is_some_and(|s| s.contains("Personal Wallet")))
+        );
+        assert!(
+            revenue_events
+                .iter()
+                .any(|e| e.sublabel.as_deref().is_some_and(|s| s.contains("Withdraw Authority")))
+        );
+
+        // Excludes identity->unknown protocol-like outflows and WA-sourced outflows.
         assert!(!revenue_events.iter().any(|e| {
             e.sublabel
                 .as_deref()
-                .is_some_and(|s| s.contains("XMic...1234") || s.contains("XMid...5678"))
+                .is_some_and(|s| s.contains("XMic...1234") || s.contains("XMid...5678") || s.contains("XBig...9012"))
         }));
     }
 
@@ -910,5 +969,23 @@ bootstrap_date = "2025-11-19"
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].entry_type, "Return of Capital");
         assert!((rows[0].sol_amount.unwrap_or(0.0) - 2.002_039_28).abs() < 1e-12);
+    }
+
+    #[test]
+    fn withdrawal_rows_drop_fee_delta_mirror_duplicates() {
+        let prices: PriceMap = HashMap::from([(String::from("2026-01-22"), 100.0)]);
+        let mut rows = Vec::new();
+
+        // Mirror duplicate artifacts for the same path in one tx:
+        // true amount 26.0 and fee-adjusted 25.999995.
+        let t1 = transfer("sig-mirror", "VOTE", "WA", 26.0, "Withdraw Authority");
+        let t2 = transfer("sig-mirror", "VOTE", "WA", 25.999_995, "Withdraw Authority");
+        let withdrawals: Vec<&SolTransfer> = vec![&t1, &t2];
+
+        add_withdrawal_rows(&mut rows, &withdrawals, &prices, 1000.0);
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].entry_type, "Return of Capital");
+        assert!((rows[0].sol_amount.unwrap_or(0.0) - 26.0).abs() < 1e-12);
     }
 }

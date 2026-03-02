@@ -719,6 +719,16 @@ fn parse_sol_transfers_debug(
         }
 
         if let Some(j) = best_j {
+            let other_is_relevant = config.is_relevant_account(&account_keys[j]);
+
+            // Avoid mirrored duplicates when both sides are relevant.
+            // In those cases, prefer emitting from the debited side (diff < 0),
+            // which preserves the true transfer amount if the credited side is
+            // also the fee payer (e.g. vote withdraw to withdraw authority).
+            if diff > 0 && other_is_relevant {
+                continue;
+            }
+
             let (from, to) = if diff > 0 {
                 (&account_keys[j], account)
             } else {

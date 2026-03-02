@@ -66,9 +66,9 @@ impl ValidatorConfig {
         let mut our_accounts = HashSet::new();
         our_accounts.insert(v.vote_account.clone());
         our_accounts.insert(v.identity.clone());
-        // Important: treat only vote + identity as business accounts for financial
-        // timelines/tax views. Withdraw authority and personal wallet are excluded
-        // from automatic business-activity categorization.
+        // Business-source accounts for taxable withdrawal classification are
+        // vote + identity. Withdraw authority is treated as an external
+        // beneficiary account for distribution tracking.
 
         Ok(Self {
             vote_account: v.vote_account,
@@ -82,7 +82,7 @@ impl ValidatorConfig {
         })
     }
 
-    /// Is this one of our business accounts (vote, identity)?
+    /// Is this one of our business-source accounts (vote, identity)?
     pub fn is_our_account(&self, address: &str) -> bool {
         self.our_accounts.contains(address)
     }
@@ -201,7 +201,7 @@ mod tests {
         let c = cfg(None);
         assert!(c.is_our_account("VOTE"));
         assert!(c.is_our_account("ID"));
-        assert!(!c.is_our_account("WA")); // withdraw authority excluded from business accounts
+        assert!(!c.is_our_account("WA")); // withdraw authority is external in tax-source logic
         assert!(!c.is_our_account("PW")); // personal wallet is special
         assert!(!c.is_our_account("random"));
     }
