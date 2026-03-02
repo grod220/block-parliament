@@ -1306,17 +1306,6 @@
       return sol !== 0 ? sol : usdToSol(usd);
     }
 
-    function isTaxWithdrawalType(eventType) {
-      return eventType === 'tax_revenue' || eventType === 'tax_return_capital';
-    }
-
-    function formatUsdAmountWithInlineSol(eventType, usd, sol) {
-      if (isTaxWithdrawalType(eventType)) {
-        return `${formatUsd(usd)} · ${formatSol(eventSolValue(usd, sol))}`;
-      }
-      return formatUsd(usd);
-    }
-
     function formatEventValueForUnit(usd, sol, unit) {
       return unit === 'usd' ? formatUsd(usd) : formatSol(eventSolValue(usd, sol));
     }
@@ -1921,9 +1910,7 @@
         });
         document.querySelectorAll('.ev-usd').forEach(el => {
           const usd = parseFloat(el.dataset.usd || '0');
-          const sol = parseFloat(el.dataset.sol || '0');
-          const eventType = el.dataset.eventType || '';
-          el.textContent = formatUsdAmountWithInlineSol(eventType, usd, sol);
+          el.textContent = formatUsd(usd);
         });
 
         document.querySelectorAll('.month-sep-net').forEach(el => {
@@ -2247,8 +2234,7 @@
       usdEl.className = 'ev-usd';
       usdEl.dataset.sol = ev.amount_sol;
       usdEl.dataset.usd = ev.amount_usd;
-      usdEl.dataset.eventType = ev.event_type;
-      usdEl.textContent = formatUsdAmountWithInlineSol(ev.event_type, ev.amount_usd, ev.amount_sol);
+      usdEl.textContent = formatUsd(ev.amount_usd);
 
       div.appendChild(dateEl);
       div.appendChild(labelDiv);
