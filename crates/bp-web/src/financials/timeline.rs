@@ -513,15 +513,40 @@ fn signed_tax_amounts(row: &TaxRow, event_type: &str) -> (f64, f64, bool) {
     }
 }
 
+/// True when an outgoing transfer should be considered a withdrawal-like
+/// taxable event (subject to seeding-capital offset).
+///
+/// Rationale:
+/// - `withdraw_authority` / `vote_account` outflows can be genuine distributions.
+/// - `identity` outflows to unknown addresses are frequently protocol operations
+///   (e.g. tip-distribution account init, BAM claim setup, access requests), not
+///   business withdrawals.
+fn is_taxable_external_withdrawal_candidate(t: &SolTransfer, config: &ValidatorConfig) -> bool {
+    if !config.is_our_account(&t.from_address) || config.is_our_account(&t.to_address) {
+        return false;
+    }
+
+    if t.from_address == config.identity {
+        return t.to_address == config.personal_wallet || super::categorize::is_exchange(&t.to_address);
+    }
+
+    true
+}
+
 /// Build tax rows from financial data (ported from tax_report.rs).
 fn build_tax_rows(data: &ReportData, config: &ValidatorConfig) -> Vec<TaxRow> {
     let mut rows = Vec::new();
 
     // ── Revenue: withdrawals offset by seeding capital ──────────────────
-    let mut all_outgoing: Vec<&SolTransfer> = data.categorized.withdrawals.iter().collect();
+    let mut all_outgoing: Vec<&SolTransfer> = data
+        .categorized
+        .withdrawals
+        .iter()
+        .filter(|t| is_taxable_external_withdrawal_candidate(t, config))
+        .collect();
     // Include outgoing "other" transfers to external addresses
     for t in &data.categorized.other {
-        if config.is_our_account(&t.from_address) && !config.is_our_account(&t.to_address) {
+        if is_taxable_external_withdrawal_candidate(t, config) {
             all_outgoing.push(t);
         }
     }
@@ -735,4 +760,97 @@ pub fn build_tax_timeline(data: &ReportData, config: &ValidatorConfig) -> Vec<Ti
 
     accumulate(&mut events);
     events
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn test_config() -> ValidatorConfig {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock before unix epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("bp-web-tax-{}-{}", std::process::id(), unique));
+        std::fs::create_dir_all(&dir).expect("create temp test dir");
+        let path = dir.join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[validator]
+vote_account = "VOTE"
+identity = "ID"
+withdraw_authority = "WA"
+personal_wallet = "PW"
+bootstrap_date = "2025-11-19"
+"#,
+        )
+        .expect("write temp config");
+
+        ValidatorConfig::load(&path).expect("load validator config")
+    }
+
+    fn transfer(signature: &str, from: &str, to: &str, amount_sol: f64, to_label: &str) -> SolTransfer {
+        SolTransfer {
+            signature: signature.to_string(),
+            date: Some("2026-02-28".to_string()),
+            from_address: from.to_string(),
+            to_address: to.to_string(),
+            amount_sol,
+            from_label: from.to_string(),
+            to_label: to_label.to_string(),
+        }
+    }
+
+    #[test]
+    fn tax_timeline_excludes_identity_operational_outflows() {
+        let config = test_config();
+
+        let categorized = CategorizedTransfers {
+            withdrawals: vec![transfer("sig-personal", "ID", "PW", 0.5, "Personal Wallet")],
+            other: vec![
+                transfer("sig-id-micro", "ID", "X_MICRO", 0.002_060_16, "XMic...1234"),
+                transfer("sig-id-mid", "ID", "X_MID", 0.129_955_84, "XMid...5678"),
+                transfer("sig-wa-big", "WA", "X_BIG", 88.0, "XBig...9012"),
+            ],
+            ..Default::default()
+        };
+
+        let prices: PriceMap = HashMap::from([(String::from("2026-02-28"), 100.0)]);
+        let rewards: Vec<EpochReward> = Vec::new();
+        let mev_claims: Vec<MevClaim> = Vec::new();
+        let bam_claims: Vec<BamClaim> = Vec::new();
+        let leader_fees: Vec<EpochLeaderFees> = Vec::new();
+        let doublezero_fees: Vec<DoubleZeroFee> = Vec::new();
+        let vote_costs: Vec<EpochVoteCost> = Vec::new();
+        let expenses: Vec<Expense> = Vec::new();
+
+        let data = ReportData {
+            rewards: &rewards,
+            categorized: &categorized,
+            mev_claims: &mev_claims,
+            bam_claims: &bam_claims,
+            leader_fees: &leader_fees,
+            doublezero_fees: &doublezero_fees,
+            vote_costs: &vote_costs,
+            expenses: &expenses,
+            prices: &prices,
+            sfdp_acceptance_date: None,
+        };
+
+        let timeline = build_tax_timeline(&data, &config);
+        let revenue_events: Vec<&TimelineEvent> = timeline.iter().filter(|e| e.event_type == "tax_revenue").collect();
+
+        // Includes: identity->personal + withdraw_authority->external
+        assert_eq!(revenue_events.len(), 2);
+
+        // Excludes identity->unknown protocol-like transfers
+        assert!(!revenue_events.iter().any(|e| {
+            e.sublabel
+                .as_deref()
+                .is_some_and(|s| s.contains("XMic...1234") || s.contains("XMid...5678"))
+        }));
+    }
 }
