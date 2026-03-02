@@ -99,7 +99,7 @@ pub fn categorize_transfers(transfers: &[SolTransfer], config: &ValidatorConfig)
         let is_outgoing = config.is_our_account(&t.from_address);
 
         if is_incoming {
-            if t.from_address == config.personal_wallet {
+            if config.is_personal_wallet(&t.from_address) {
                 cat.seeding.push(t.clone());
             } else if is_solana_foundation(&t.from_address) {
                 cat.sfdp_reimbursements.push(t.clone());
@@ -111,7 +111,7 @@ pub fn categorize_transfers(transfers: &[SolTransfer], config: &ValidatorConfig)
                 cat.other.push(t.clone());
             }
         } else if is_outgoing {
-            if is_exchange(&t.to_address) || t.to_address == config.personal_wallet {
+            if is_exchange(&t.to_address) || config.is_personal_wallet(&t.to_address) {
                 cat.withdrawals.push(t.clone());
             } else if config.is_our_account(&t.to_address) {
                 cat.vote_funding.push(t.clone());

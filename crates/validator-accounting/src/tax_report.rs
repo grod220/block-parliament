@@ -128,7 +128,7 @@ fn is_taxable_external_withdrawal_candidate(t: &SolTransfer, config: &Config) ->
     // Identity outflows are often protocol operational; treat only known
     // beneficiary channels as taxable-distribution candidates.
     if t.from == config.identity {
-        return t.to == config.withdraw_authority || t.to == config.personal_wallet || addresses::is_exchange(&t.to);
+        return t.to == config.withdraw_authority || config.is_personal_wallet(&t.to) || addresses::is_exchange(&t.to);
     }
 
     // Vote-account outflows to any external destination are candidates.

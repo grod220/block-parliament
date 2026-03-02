@@ -1345,18 +1345,16 @@ async fn handle_position_command(action: PositionCommand, cache: &Cache, config_
                 config.vote_account.to_string(),
                 config.identity.to_string(),
                 config.withdraw_authority.to_string(),
-                config.personal_wallet.to_string(),
             ];
+            internal_addresses.extend(config.personal_wallets.iter().map(ToString::to_string));
 
             // Add token accounts (ATAs) for each wallet - these are also "internal"
             // since they hold the user's tokens (wSOL, mSOL, USDC, jitoSOL)
             // Include vote_account for completeness (though vote accounts rarely hold tokens)
-            for wallet in [
-                &config.vote_account,
-                &config.identity,
-                &config.withdraw_authority,
-                &config.personal_wallet,
-            ] {
+            for wallet in [&config.vote_account, &config.identity, &config.withdraw_authority] {
+                internal_addresses.extend(positions::compute_common_atas(wallet));
+            }
+            for wallet in &config.personal_wallets {
                 internal_addresses.extend(positions::compute_common_atas(wallet));
             }
 
@@ -3461,7 +3459,7 @@ async fn fetch_transfers_with_cache(
 
     for (label, account) in transactions::get_tracked_accounts(config) {
         // Use account progress (tracks highest slot seen, even if no transfers found)
-        let mut latest_slot = cache.get_account_progress(label).await?;
+        let mut latest_slot = cache.get_account_progress(&label).await?;
         if latest_slot.is_none() {
             latest_slot = cached_max_slot_by_account.get(&account).copied();
         }
@@ -3471,11 +3469,11 @@ async fn fetch_transfers_with_cache(
         }
 
         // Fetch new transfers (will stop when hitting already-cached slot)
-        match transactions::fetch_transfers_for_account(config, &account, label, latest_slot, verbose).await {
+        match transactions::fetch_transfers_for_account(config, &account, &label, latest_slot, verbose).await {
             Ok(result) => {
                 // Store progress even if no transfers found (for accounts with only versioned txs)
                 if let Some(highest_slot) = result.highest_slot_seen {
-                    cache.set_account_progress(label, highest_slot).await?;
+                    cache.set_account_progress(&label, highest_slot).await?;
                 }
                 if result.hit_max_signatures {
                     hit_signature_cap = true;
@@ -3508,8 +3506,8 @@ async fn fetch_transfers_with_cache(
         }
     }
 
-    // Always supplement with Dune when available. RPC only scans withdraw_authority and
-    // personal_wallet; Dune covers all 4 accounts (identity, vote, withdraw_authority, personal)
+    // Always supplement with Dune when available. RPC scans withdraw_authority and configured
+    // personal wallets; Dune covers identity, vote, withdraw_authority, and all personal wallets.
     // and catches SFDP→vote_account, Jito→identity, and other transfers RPC can't see.
     if dune_api_key.is_none() {
         eprintln!("    ⚠️  Warning: RPC transfer history may be incomplete (no Dune API key).");

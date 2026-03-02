@@ -17,6 +17,13 @@ withdraw_authority = "YourWithdrawAuthorityPubkeyHere"
 # Personal wallet used for seeding/withdrawals (for categorizing transfers)
 personal_wallet = "YourPersonalWalletPubkeyHere"
 
+# Optional: additional personal wallets to treat as owner wallets for
+# seeding/withdrawal classification.
+# `personal_wallet` remains the primary wallet for backwards compatibility.
+personal_wallets = [
+  "AnotherPersonalWalletPubkeyHere"
+]
+
 # Commission percentage (0-100)
 commission_percent = 5
 

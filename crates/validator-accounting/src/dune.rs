@@ -80,8 +80,8 @@ pub struct DuneClient {
     identity: String,
     /// Withdraw authority address (for transfer queries)
     withdraw_authority: String,
-    /// Personal wallet address (for transfer queries: seeding/withdrawals)
-    personal_wallet: String,
+    /// Personal wallet addresses (for transfer queries: seeding/withdrawals)
+    personal_wallets: Vec<String>,
     /// Commission percentage (for reward records)
     commission_percent: u8,
 }
@@ -109,7 +109,7 @@ impl DuneClient {
             vote_account: config.vote_account.to_string(),
             identity: config.identity.to_string(),
             withdraw_authority: config.withdraw_authority.to_string(),
-            personal_wallet: config.personal_wallet.to_string(),
+            personal_wallets: config.personal_wallets.iter().map(ToString::to_string).collect(),
             commission_percent: config.commission_percent,
         }
     }
@@ -387,18 +387,24 @@ impl DuneClient {
         Self::validate_address(&self.identity)?;
         Self::validate_address(&self.withdraw_authority)?;
         Self::validate_address(&self.vote_account)?;
-        Self::validate_address(&self.personal_wallet)?;
+        for wallet in &self.personal_wallets {
+            Self::validate_address(wallet)?;
+        }
         println!("  Querying Dune for SOL transfers...");
 
         // Build the account list from config
-        let accounts = [
+        let mut accounts = vec![
             self.identity.as_str(),
             self.withdraw_authority.as_str(),
             self.vote_account.as_str(),
-            self.personal_wallet.as_str(),
         ];
+        for wallet in &self.personal_wallets {
+            accounts.push(wallet.as_str());
+        }
+        accounts.sort_unstable();
+        accounts.dedup();
         let account_list = accounts
-            .iter()
+            .into_iter()
             .map(|a| format!("'{}'", a))
             .collect::<Vec<_>>()
             .join(", ");
@@ -541,7 +547,7 @@ impl DuneClient {
                 "Withdraw Authority".to_string(),
                 crate::addresses::AddressCategory::ValidatorSelf,
             )
-        } else if s == self.personal_wallet {
+        } else if self.personal_wallets.iter().any(|w| w == &s) {
             (
                 "Personal Wallet".to_string(),
                 crate::addresses::AddressCategory::PersonalWallet,

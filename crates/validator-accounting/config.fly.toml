@@ -9,6 +9,10 @@ vote_account = "4PL2ZFoZJHgkbZ54US4qNC58X69Fa1FKtY4CaVKeuQPg"
 identity = "mD1afZhSisoXfJLT8nYwSFANqjr1KPoDUEpYTEfFX1e"
 withdraw_authority = "AN58nFDFdehKbP7d3KALhnCJAsWNE7cWpCR6dLVAj9xm"
 personal_wallet = "CDfxi8DUxspoFPjdiXGyKkewCuQ8wJMszbBEtT4FTMZX"
+personal_wallets = [
+  "CDfxi8DUxspoFPjdiXGyKkewCuQ8wJMszbBEtT4FTMZX",
+  "AN58nFDFdehKbP7d3KALhnCJAsWNE7cWpCR6dLVAj9xm",
+]
 commission_percent = 5
 first_reward_epoch = 900
 bootstrap_date = "2025-11-19"

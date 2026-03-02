@@ -204,14 +204,21 @@ pub async fn fetch_sol_transfers(config: &Config, verbose: bool) -> Result<Vec<S
 
     let mut all_transfers = Vec::new();
 
-    // Fetch for withdraw authority and personal wallet.
+    // Fetch for withdraw authority and personal wallets.
     // Skip identity (dominated by vote txs) and vote account.
     // SFDP reimbursement address is excluded — it is a global address with thousands of
     // transactions to all validators; SFDP transfers are covered by Dune fallback instead.
-    for (label, account) in [
-        ("withdraw authority", config.withdraw_authority),
-        ("personal wallet", config.personal_wallet),
-    ] {
+    let mut tracked_accounts = vec![("withdraw authority".to_string(), config.withdraw_authority)];
+    for (idx, wallet) in config.personal_wallets.iter().enumerate() {
+        let label = if idx == 0 {
+            "personal wallet".to_string()
+        } else {
+            format!("personal wallet {}", idx + 1)
+        };
+        tracked_accounts.push((label, *wallet));
+    }
+
+    for (label, account) in tracked_accounts {
         println!(
             "    Fetching transactions for {} ({})...",
             label,
@@ -566,11 +573,17 @@ pub async fn fetch_transfers_for_account(
 /// Foundation address with thousands of transactions to all validators, causing RPC scans to hit
 /// the signature cap (2000) with only ~1-2% of transactions relevant to us. SFDP→withdraw_authority
 /// transfers are already captured here; SFDP→vote_account transfers are covered by Dune fallback.
-pub fn get_tracked_accounts(config: &Config) -> Vec<(&'static str, Pubkey)> {
-    vec![
-        ("withdraw_authority", config.withdraw_authority),
-        ("personal_wallet", config.personal_wallet),
-    ]
+pub fn get_tracked_accounts(config: &Config) -> Vec<(String, Pubkey)> {
+    let mut accounts = vec![("withdraw_authority".to_string(), config.withdraw_authority)];
+    for (idx, wallet) in config.personal_wallets.iter().enumerate() {
+        let label = if idx == 0 {
+            "personal_wallet".to_string()
+        } else {
+            format!("personal_wallet_{}", idx + 1)
+        };
+        accounts.push((label, *wallet));
+    }
+    accounts
 }
 
 /// Parse SOL transfers from a transaction with optional debug output
@@ -827,7 +840,7 @@ fn label_and_category_for_address(pubkey: &Pubkey, config: &Config) -> (String, 
         ("Identity Account".to_string(), AddressCategory::ValidatorSelf)
     } else if *pubkey == config.withdraw_authority {
         ("Withdraw Authority".to_string(), AddressCategory::ValidatorSelf)
-    } else if *pubkey == config.personal_wallet {
+    } else if config.is_personal_wallet(pubkey) {
         ("Personal Wallet".to_string(), AddressCategory::PersonalWallet)
     } else {
         let label = addresses::get_label(pubkey);
@@ -856,8 +869,11 @@ pub fn categorize_transfers(transfers: &[SolTransfer], config: &Config) -> Categ
 
         if is_incoming {
             // Categorize incoming transfers
-            if transfer.from == config.personal_wallet {
-                // From personal wallet = seeding
+            if config.is_our_account(&transfer.from) {
+                // Internal transfer (identity/withdraw authority -> vote/identity)
+                categorized.vote_funding.push(transfer.clone());
+            } else if config.is_personal_wallet(&transfer.from) {
+                // From external personal wallet = seeding
                 categorized.seeding.push(transfer.clone());
             } else if addresses::is_solana_foundation(&transfer.from) {
                 // From SF = SFDP reimbursement
@@ -865,19 +881,16 @@ pub fn categorize_transfers(transfers: &[SolTransfer], config: &Config) -> Categ
             } else if addresses::is_jito(&transfer.from) {
                 // From Jito = MEV deposit
                 categorized.mev_deposits.push(transfer.clone());
-            } else if config.is_our_account(&transfer.from) {
-                // Internal transfer (identity -> vote account for funding)
-                categorized.vote_funding.push(transfer.clone());
             } else {
                 categorized.other.push(transfer.clone());
             }
         } else if is_outgoing {
             // Outgoing transfers
-            if addresses::is_exchange(&transfer.to) || transfer.to == config.personal_wallet {
-                categorized.withdrawals.push(transfer.clone());
-            } else if config.is_our_account(&transfer.to) {
+            if config.is_our_account(&transfer.to) {
                 // Internal transfer
                 categorized.vote_funding.push(transfer.clone());
+            } else if addresses::is_exchange(&transfer.to) || config.is_personal_wallet(&transfer.to) {
+                categorized.withdrawals.push(transfer.clone());
             } else {
                 categorized.other.push(transfer.clone());
             }

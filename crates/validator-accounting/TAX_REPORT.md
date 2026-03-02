@@ -28,7 +28,7 @@ Revenue is **not** recognized when SOL accumulates in the vote account. It is re
 | Transfer destination | Treatment |
 |---------------------|-----------|
 | Known exchange (Coinbase, Kraken, etc.) | Revenue |
-| Personal wallet (`personal_wallet` in config) | Revenue |
+| Personal wallet (`personal_wallet` / `personal_wallets` in config) | Revenue |
 | Any unlabeled external address | Revenue |
 | Internal (vote account ↔ identity) | Ignored |
 
@@ -101,6 +101,7 @@ vote_account = "4PL2Z..."
 identity = "mD1af..."
 withdraw_authority = "AN58n..."
 personal_wallet = "CDfxi..."
+personal_wallets = ["CDfxi...", "AN58n..."]
 commission_percent = 5
 first_reward_epoch = 900
 bootstrap_date = "2025-11-19"
@@ -109,7 +110,7 @@ sfdp_acceptance_date = "2025-12-16"   # Omit if not in SFDP
 
 | Field | Purpose |
 |-------|---------|
-| `personal_wallet` | Withdrawals to this address are treated as revenue |
+| `personal_wallet` / `personal_wallets` | Withdrawals to these addresses are treated as revenue |
 | `first_reward_epoch` | First epoch the validator earned rewards (filters noise) |
 | `bootstrap_date` | Date the validator started — used for transfer history fetch |
 | `sfdp_acceptance_date` | Date accepted into SFDP — triggers coverage schedule |

@@ -24,6 +24,8 @@ struct ValidatorSection {
     identity: String,
     withdraw_authority: String,
     personal_wallet: String,
+    #[serde(default)]
+    personal_wallets: Vec<String>,
     bootstrap_date: String,
     #[serde(default)]
     initial_treasury_sol: Option<f64>,
@@ -46,6 +48,7 @@ pub struct ValidatorConfig {
     pub identity: String,
     pub withdraw_authority: String,
     pub personal_wallet: String,
+    pub personal_wallets: Vec<String>,
     pub bootstrap_date: String,
     pub initial_treasury_sol: f64,
     pub sfdp_acceptance_date: Option<String>,
@@ -65,6 +68,12 @@ impl ValidatorConfig {
 
         let v = file.validator;
         let dz_deposit = file.doublezero.and_then(|dz| dz.deposit_account);
+        let mut personal_wallets = vec![v.personal_wallet.clone()];
+        for w in &v.personal_wallets {
+            if !personal_wallets.contains(w) {
+                personal_wallets.push(w.clone());
+            }
+        }
 
         let mut our_accounts = HashSet::new();
         our_accounts.insert(v.vote_account.clone());
@@ -78,6 +87,7 @@ impl ValidatorConfig {
             identity: v.identity,
             withdraw_authority: v.withdraw_authority,
             personal_wallet: v.personal_wallet,
+            personal_wallets,
             bootstrap_date: v.bootstrap_date,
             initial_treasury_sol: v.initial_treasury_sol.unwrap_or(0.0).max(0.0),
             sfdp_acceptance_date: v.sfdp_acceptance_date,
@@ -89,6 +99,11 @@ impl ValidatorConfig {
     /// Is this one of our business-source accounts (vote, identity)?
     pub fn is_our_account(&self, address: &str) -> bool {
         self.our_accounts.contains(address)
+    }
+
+    /// Is this one of the configured personal wallet addresses?
+    pub fn is_personal_wallet(&self, address: &str) -> bool {
+        self.personal_wallets.iter().any(|w| w == address)
     }
 
     /// First day of the bootstrap month.
@@ -150,6 +165,7 @@ mod tests {
             identity: "ID".into(),
             withdraw_authority: "WA".into(),
             personal_wallet: "PW".into(),
+            personal_wallets: vec!["PW".into()],
             bootstrap_date: "2025-11-19".into(),
             initial_treasury_sol: 0.0,
             sfdp_acceptance_date: sfdp.map(|s| s.into()),
@@ -209,6 +225,8 @@ mod tests {
         assert!(!c.is_our_account("WA")); // withdraw authority is external in tax-source logic
         assert!(!c.is_our_account("PW")); // personal wallet is special
         assert!(!c.is_our_account("random"));
+        assert!(c.is_personal_wallet("PW"));
+        assert!(!c.is_personal_wallet("random"));
     }
 
     #[test]

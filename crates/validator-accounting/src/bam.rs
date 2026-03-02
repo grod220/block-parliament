@@ -261,11 +261,12 @@ mod tests {
     /// Create a minimal test config for BAM tests
     fn test_config() -> Config {
         use solana_sdk::pubkey::Pubkey;
-        Config {
+        let mut cfg = Config {
             vote_account: Pubkey::new_unique(),
             identity: Pubkey::new_unique(),
             withdraw_authority: Pubkey::new_unique(),
             personal_wallet: Pubkey::new_unique(),
+            personal_wallets: vec![],
             rpc_url: "https://test.rpc".to_string(),
             coingecko_api_key: "test".to_string(),
             dune_api_key: None,
@@ -281,7 +282,9 @@ mod tests {
             doublezero_fee_rate: 0.05,
             doublezero_first_epoch: 859,
             doublezero_deposit_account: None,
-        }
+        };
+        cfg.personal_wallets = vec![cfg.personal_wallet];
+        cfg
     }
 
     #[test]

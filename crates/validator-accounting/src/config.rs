@@ -90,6 +90,9 @@ pub struct ValidatorConfig {
     pub withdraw_authority: String,
     /// Personal wallet address (for categorizing seeding/withdrawals)
     pub personal_wallet: String,
+    /// Additional personal wallet addresses (optional)
+    #[serde(default)]
+    pub personal_wallets: Vec<String>,
     /// Commission percentage (0-100)
     pub commission_percent: u8,
     /// First epoch with staking rewards
@@ -196,6 +199,8 @@ pub struct Config {
     pub withdraw_authority: Pubkey,
     /// Personal wallet (for detecting seeding transactions)
     pub personal_wallet: Pubkey,
+    /// Personal wallets (primary + any additional configured personal wallets)
+    pub personal_wallets: Vec<Pubkey>,
     /// RPC URL
     pub rpc_url: String,
     /// CoinGecko API key
@@ -235,6 +240,16 @@ impl Config {
     /// (env vars take precedence — see `ApiKeys::apply_env_overrides`).
     pub fn from_file(file_config: &FileConfig, rpc_url: Option<String>) -> Result<Self> {
         let validator = &file_config.validator;
+
+        let primary_personal_wallet =
+            Pubkey::from_str(&validator.personal_wallet).with_context(|| "Invalid personal_wallet address")?;
+        let mut personal_wallets = vec![primary_personal_wallet];
+        for addr in &validator.personal_wallets {
+            let parsed = Pubkey::from_str(addr).with_context(|| "Invalid personal_wallets address")?;
+            if !personal_wallets.contains(&parsed) {
+                personal_wallets.push(parsed);
+            }
+        }
 
         // Validate that required API keys are present (from either TOML or env)
         anyhow::ensure!(
@@ -278,8 +293,8 @@ impl Config {
             identity: Pubkey::from_str(&validator.identity).with_context(|| "Invalid identity address")?,
             withdraw_authority: Pubkey::from_str(&validator.withdraw_authority)
                 .with_context(|| "Invalid withdraw_authority address")?,
-            personal_wallet: Pubkey::from_str(&validator.personal_wallet)
-                .with_context(|| "Invalid personal_wallet address")?,
+            personal_wallet: primary_personal_wallet,
+            personal_wallets,
 
             // Helius RPC endpoint (has historical transaction data)
             rpc_url: rpc_url
@@ -330,7 +345,12 @@ impl Config {
 
     /// Check if a pubkey is any account we care about (including personal wallet)
     pub fn is_relevant_account(&self, pubkey: &Pubkey) -> bool {
-        self.is_our_account(pubkey) || *pubkey == self.personal_wallet
+        self.is_our_account(pubkey) || self.is_personal_wallet(pubkey)
+    }
+
+    /// Check if a pubkey is any configured personal wallet.
+    pub fn is_personal_wallet(&self, pubkey: &Pubkey) -> bool {
+        self.personal_wallets.iter().any(|p| p == pubkey)
     }
 
     /// Get DoubleZero fee rate as basis points (0-10000)
@@ -383,11 +403,12 @@ mod tests {
 
     /// Create a minimal Config for testing SFDP calculations
     fn test_config(sfdp_date: Option<&str>) -> Config {
-        Config {
+        let mut cfg = Config {
             vote_account: Pubkey::new_unique(),
             identity: Pubkey::new_unique(),
             withdraw_authority: Pubkey::new_unique(),
             personal_wallet: Pubkey::new_unique(),
+            personal_wallets: vec![],
             rpc_url: String::new(),
             coingecko_api_key: String::new(),
             dune_api_key: None,
@@ -403,7 +424,9 @@ mod tests {
             doublezero_fee_rate: 0.05,
             doublezero_first_epoch: 859,
             doublezero_deposit_account: None,
-        }
+        };
+        cfg.personal_wallets = vec![cfg.personal_wallet];
+        cfg
     }
 
     #[test]

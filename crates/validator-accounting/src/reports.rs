@@ -413,7 +413,7 @@ fn generate_glossary(output_dir: &Path) -> Result<()> {
         "",
         "Which on-chain accounts are considered 'in scope' for this validator's books (vote/identity/withdraw authority and any configured personal wallet used for seeding/flows).",
         "Determines whether transfers are treated as internal movements vs external (potential distributions, contributions, etc.).",
-        "config.toml validator addresses (vote_account, identity, withdraw_authority, personal_wallet) plus derived token accounts (ATAs) where applicable.",
+        "config.toml validator addresses (vote_account, identity, withdraw_authority, personal_wallet/personal_wallets) plus derived token accounts (ATAs) where applicable.",
         "Confirm which wallets legally belong to the reporting entity. If a personal wallet is mixed-use, treasury transfers may require manual classification (owner distribution vs business transfer).",
     )?;
     row(

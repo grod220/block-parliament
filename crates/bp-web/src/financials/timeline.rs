@@ -530,7 +530,7 @@ fn is_taxable_external_withdrawal_candidate(t: &SolTransfer, config: &ValidatorC
 
     if t.from_address == config.identity {
         return t.to_address == config.withdraw_authority
-            || t.to_address == config.personal_wallet
+            || config.is_personal_wallet(&t.to_address)
             || super::categorize::is_exchange(&t.to_address);
     }
 

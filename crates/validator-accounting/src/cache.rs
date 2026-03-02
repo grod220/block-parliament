@@ -1812,7 +1812,8 @@ impl Cache {
         let from_vote = config.vote_account.to_string();
         let from_identity = config.identity.to_string();
         let from_withdraw = config.withdraw_authority.to_string();
-        let personal_wallet = config.personal_wallet.to_string();
+        let personal_wallets: std::collections::HashSet<String> =
+            config.personal_wallets.iter().map(ToString::to_string).collect();
 
         let rows: Vec<(String, i64)> = sqlx::query_as(
             "SELECT to_address, amount_lamports
@@ -1830,8 +1831,8 @@ impl Cache {
             if amount <= 0 {
                 continue;
             }
-            // Always count transfers to personal wallet as withdrawals.
-            if to_str == personal_wallet {
+            // Always count transfers to external personal wallets as withdrawals.
+            if personal_wallets.contains(&to_str) && !internal.contains(&to_str) {
                 total = total.saturating_add(amount as u64);
                 continue;
             }
@@ -1868,7 +1869,8 @@ impl Cache {
         let from_vote = config.vote_account.to_string();
         let from_identity = config.identity.to_string();
         let from_withdraw = config.withdraw_authority.to_string();
-        let personal_wallet = config.personal_wallet.to_string();
+        let personal_wallets: std::collections::HashSet<String> =
+            config.personal_wallets.iter().map(ToString::to_string).collect();
 
         let rows: Vec<(String, i64)> = sqlx::query_as(
             "SELECT to_address, amount_lamports
@@ -1888,7 +1890,7 @@ impl Cache {
             if amount <= 0 {
                 continue;
             }
-            if to_str == personal_wallet {
+            if personal_wallets.contains(&to_str) && !internal.contains(&to_str) {
                 total = total.saturating_add(amount as u64);
                 continue;
             }
