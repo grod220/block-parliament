@@ -197,8 +197,6 @@ pub struct Config {
     pub identity: Pubkey,
     /// Withdraw authority pubkey
     pub withdraw_authority: Pubkey,
-    /// Personal wallet (for detecting seeding transactions)
-    pub personal_wallet: Pubkey,
     /// Personal wallets (primary + any additional configured personal wallets)
     pub personal_wallets: Vec<Pubkey>,
     /// RPC URL
@@ -293,7 +291,6 @@ impl Config {
             identity: Pubkey::from_str(&validator.identity).with_context(|| "Invalid identity address")?,
             withdraw_authority: Pubkey::from_str(&validator.withdraw_authority)
                 .with_context(|| "Invalid withdraw_authority address")?,
-            personal_wallet: primary_personal_wallet,
             personal_wallets,
 
             // Helius RPC endpoint (has historical transaction data)
@@ -403,12 +400,12 @@ mod tests {
 
     /// Create a minimal Config for testing SFDP calculations
     fn test_config(sfdp_date: Option<&str>) -> Config {
-        let mut cfg = Config {
+        let personal_wallet = Pubkey::new_unique();
+        Config {
             vote_account: Pubkey::new_unique(),
             identity: Pubkey::new_unique(),
             withdraw_authority: Pubkey::new_unique(),
-            personal_wallet: Pubkey::new_unique(),
-            personal_wallets: vec![],
+            personal_wallets: vec![personal_wallet],
             rpc_url: String::new(),
             coingecko_api_key: String::new(),
             dune_api_key: None,
@@ -424,9 +421,7 @@ mod tests {
             doublezero_fee_rate: 0.05,
             doublezero_first_epoch: 859,
             doublezero_deposit_account: None,
-        };
-        cfg.personal_wallets = vec![cfg.personal_wallet];
-        cfg
+        }
     }
 
     #[test]
