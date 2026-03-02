@@ -26,6 +26,8 @@ struct ValidatorSection {
     personal_wallet: String,
     bootstrap_date: String,
     #[serde(default)]
+    initial_treasury_sol: Option<f64>,
+    #[serde(default)]
     sfdp_acceptance_date: Option<String>,
 }
 
@@ -45,6 +47,7 @@ pub struct ValidatorConfig {
     pub withdraw_authority: String,
     pub personal_wallet: String,
     pub bootstrap_date: String,
+    pub initial_treasury_sol: f64,
     pub sfdp_acceptance_date: Option<String>,
     pub doublezero_deposit_account: Option<String>,
 
@@ -76,6 +79,7 @@ impl ValidatorConfig {
             withdraw_authority: v.withdraw_authority,
             personal_wallet: v.personal_wallet,
             bootstrap_date: v.bootstrap_date,
+            initial_treasury_sol: v.initial_treasury_sol.unwrap_or(0.0).max(0.0),
             sfdp_acceptance_date: v.sfdp_acceptance_date,
             doublezero_deposit_account: dz_deposit,
             our_accounts,
@@ -147,6 +151,7 @@ mod tests {
             withdraw_authority: "WA".into(),
             personal_wallet: "PW".into(),
             bootstrap_date: "2025-11-19".into(),
+            initial_treasury_sol: 0.0,
             sfdp_acceptance_date: sfdp.map(|s| s.into()),
             doublezero_deposit_account: None,
             our_accounts: ["VOTE", "ID"].iter().map(|s| s.to_string()).collect(),

@@ -554,7 +554,8 @@ fn build_tax_rows(data: &ReportData, config: &ValidatorConfig) -> Vec<TaxRow> {
             all_outgoing.push(t);
         }
     }
-    let total_seeded_sol: f64 = data.categorized.seeding.iter().map(|s| s.amount_sol).sum();
+    let total_seeded_sol: f64 =
+        config.initial_treasury_sol + data.categorized.seeding.iter().map(|s| s.amount_sol).sum::<f64>();
     add_withdrawal_rows(&mut rows, &all_outgoing, data.prices, total_seeded_sol);
 
     // ── Expenses: vote fees (net of SFDP) ───────────────────────────────

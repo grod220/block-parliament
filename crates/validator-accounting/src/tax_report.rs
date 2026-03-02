@@ -73,7 +73,8 @@ pub fn build_tax_rows(data: &TaxReportData, year_filter: Option<i32>) -> (Vec<Ta
             all_outgoing.push(t);
         }
     }
-    let total_seeded_sol: f64 = data.categorized.seeding.iter().map(|s| s.amount_sol).sum();
+    let total_seeded_sol: f64 = (data.config.initial_treasury_lamports as f64 / 1e9)
+        + data.categorized.seeding.iter().map(|s| s.amount_sol).sum::<f64>();
     add_withdrawal_rows(
         &mut rows,
         &all_outgoing,

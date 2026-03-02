@@ -2223,6 +2223,12 @@
         subEl.textContent = subLabelText;
         labelDiv.appendChild(subEl);
       }
+      if (currentViewMode === 'tax' && (ev.event_type === 'tax_revenue' || ev.event_type === 'tax_return_capital')) {
+        const solMetaEl = document.createElement('div');
+        solMetaEl.className = 'ev-label-sub';
+        solMetaEl.textContent = `Amount · ${formatSol(eventSolValue(ev.amount_usd, ev.amount_sol))}`;
+        labelDiv.appendChild(solMetaEl);
+      }
 
       const solEl = document.createElement('span');
       solEl.className = 'ev-sol';
